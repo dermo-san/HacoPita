@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>HacoPita</title>
+    <style>
+        body { font-family: Arial, sans-serif; background: #f5f7fb; margin: 0; padding: 0; color: #333; }
+        header { background: #1b4965; color: #fff; padding: 24px; text-align: center; }
+        main { max-width: 960px; margin: 0 auto; padding: 32px 16px 64px; }
+        section { background: #fff; border-radius: 8px; padding: 24px; box-shadow: 0 4px 20px rgba(0,0,0,0.08); }
+        h1 { margin-top: 0; }
+        label { display: block; font-weight: bold; margin-bottom: 8px; }
+        input[type="file"] { display: block; margin-bottom: 16px; }
+        button { background: #1b4965; color: #fff; border: none; border-radius: 4px; padding: 12px 24px; font-size: 1rem; cursor: pointer; }
+        button:hover { background: #16394f; }
+        ul { padding-left: 18px; }
+        .alert { margin-bottom: 16px; padding: 12px; border-radius: 6px; }
+        .alert.error { background: #ffecea; color: #b10000; border: 1px solid #fcc; }
+        .alert.info { background: #eef6ff; border: 1px solid #c7dfff; color: #1b4965; }
+        .columns { columns: 2; } 
+        @media (max-width: 640px) { .columns { columns: 1; } }
+    </style>
+</head>
+<body>
+<header>
+    <h1>HacoPita</h1>
+    <p>CSVをアップロードして predicted_box_id を付与</p>
+</header>
+<main>
+    <section>
+        {% if error_message %}
+        <div class="alert error">{{ error_message }}</div>
+        {% elif model_error %}
+        <div class="alert error">{{ model_error }}</div>
+        {% endif %}
+        <form action="/predict" method="post" enctype="multipart/form-data">
+            <label for="file">CSVファイルを選択</label>
+            <input type="file" id="file" name="file" accept=".csv" required>
+            <button type="submit">推論してCSVをダウンロード</button>
+        </form>
+        <p class="alert info">※ 文字コードは <strong>UTF-8 (BOM付き含む)</strong> または <strong>CP932</strong> に対応しています。</p>
+        <h2>必須列（26列）</h2>
+        <div class="columns">
+            <ul>
+                <li>slip_number (integer)</li>
+                <li>shipment_confirmed_date (datetime)</li>
+                <li>subtotal_amount (integer)</li>
+                <li>total_line_count (integer)</li>
+                <li>bonsai (integer)</li>
+                <li>others (integer)</li>
+                <li>plastic_pots_trays (integer)</li>
+                <li>single_flower_vase (integer)</li>
+                <li>decorative_sand (integer)</li>
+                <li>saucers_mats (integer)</li>
+                <li>books (integer)</li>
+                <li>water_basins (integer)</li>
+                <li>bonsai_seeds (integer)</li>
+            </ul>
+            <ul>
+                <li>bonsai_class_items (integer)</li>
+                <li>bonsai_soil (integer)</li>
+                <li>bonsai_tools (integer)</li>
+                <li>bonsai_pots (integer)</li>
+                <li>bonsai_decor (integer)</li>
+                <li>lucky_bag (integer)</li>
+                <li>moss (integer)</li>
+                <li>moss_bonsai (integer)</li>
+                <li>chemicals_fertilizers (integer)</li>
+                <li>wire (integer)</li>
+                <li>decorative_stones (integer)</li>
+                <li>specification (integer)</li>
+                <li>dimensions (string)</li>
+            </ul>
+        </div>
+        <h2>出力仕様</h2>
+        <ul>
+            <li>アップロードしたCSVの列を保持し、末尾に <code>predicted_box_id</code> を追加してダウンロード</li>
+            <li>推論に必要な列が不足している場合は 400 でエラー内容を表示</li>
+            <li>サンプルCSV：<a href="{{ url_for('static', filename='sample_input.csv') }}" download>sample_input.csv</a></li>
+        </ul>
+        <h2>APIの使い方</h2>
+        <ul>
+            <li><code>POST /api/predict</code> に <code>multipart/form-data</code> で <code>file</code> フィールドを送信</li>
+            <li><code>?format=json</code> を付けると JSON (slip_number, predicted_box_id) を返却</li>
+        </ul>
+    </section>
+</main>
+</body>
+</html>
