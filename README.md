@@ -34,6 +34,8 @@ Render での起動コマンド例：
 gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 8 --timeout 120
 ```
 
+- Python ランタイム：`runtime.txt` で `python-3.9.23` を明示しているため、Render 側でも同じバージョンを利用してください（3.12 などでビルドすると AzureML 依存が解決できません）。
+
 ## API/画面仕様
 
 - `GET /`：CSVアップロードフォームと仕様説明を表示。サンプルCSV (`static/sample_input.csv`) をダウンロード可能。
