@@ -68,8 +68,32 @@ INTEGER_COLUMNS = [
 
 DATETIME_COLUMNS = ["shipment_confirmed_date"]
 STRING_COLUMNS = ["dimensions"]
+EXPECTED_FEATURES: List[str] = [
+    "total_line_count",
+    "bonsai",
+    "others",
+    "plastic_pots_trays",
+    "single_flower_vase",
+    "decorative_sand",
+    "saucers_mats",
+    "books",
+    "water_basins",
+    "bonsai_seeds",
+    "bonsai_class_items",
+    "bonsai_soil",
+    "bonsai_tools",
+    "bonsai_pots",
+    "bonsai_decor",
+    "lucky_bag",
+    "moss",
+    "moss_bonsai",
+    "chemicals_fertilizers",
+    "wire",
+    "decorative_stones",
+]
 FALLBACK_DATE = pd.Timestamp("1970-01-01")
 MODEL_PATH = Path(__file__).resolve().parent / "model.pkl"
+LOGGER = logging.getLogger(__name__)
 
 
 def create_app() -> Flask:
@@ -179,16 +203,22 @@ def process_file(file_storage, model) -> Tuple[pd.DataFrame, List[int]]:
             f"必須列が不足しています: {', '.join(missing)}", status_code=400
         )
 
-    features = prepare_features(input_df)
+    normalized_df = normalize_input_dataframe(input_df)
+    features = prepare_model_input(normalized_df)
 
     try:
+        LOGGER.info(
+            "Model input shape=%s columns=%s",
+            features.shape,
+            list(features.columns),
+        )
         raw_predictions = model.predict(features)
     except Exception as exc:
         raise PredictionError(f"推論に失敗しました: {exc}", status_code=500) from exc
 
     flattened = np.asarray(raw_predictions).reshape(-1)
     predictions = pd.Series(flattened).fillna(0).astype("int64")
-    result_df = input_df.copy()
+    result_df = normalized_df.copy()
     result_df["predicted_box_id"] = predictions.values
     return result_df, predictions.tolist()
 
@@ -211,25 +241,37 @@ def read_csv_with_fallback(file_storage) -> pd.DataFrame:
     )
 
 
-def prepare_features(df: pd.DataFrame) -> pd.DataFrame:
-    features = df[REQUIRED_COLUMNS].copy()
+def normalize_input_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+    normalized = df.copy()
 
     for column in INTEGER_COLUMNS:
-        features[column] = (
-            pd.to_numeric(features[column], errors="coerce")
-            .fillna(0)
-            .astype("int64")
+        normalized[column] = (
+            pd.to_numeric(normalized[column], errors="coerce").fillna(0).astype("int64")
         )
 
     for column in DATETIME_COLUMNS:
-        features[column] = pd.to_datetime(features[column], errors="coerce").fillna(
+        normalized[column] = pd.to_datetime(normalized[column], errors="coerce").fillna(
             FALLBACK_DATE
         )
 
     for column in STRING_COLUMNS:
-        features[column] = features[column].fillna("").astype(str)
+        normalized[column] = normalized[column].fillna("").astype(str)
 
-    return features
+    return normalized
+
+
+def prepare_model_input(df: pd.DataFrame) -> pd.DataFrame:
+    missing = [col for col in EXPECTED_FEATURES if col not in df.columns]
+    if missing:
+        raise PredictionError(
+            f"モデルに必要な列が不足しています: {', '.join(missing)}", status_code=400
+        )
+
+    features = df.reindex(columns=EXPECTED_FEATURES).copy()
+    for column in EXPECTED_FEATURES:
+        features[column] = pd.to_numeric(features[column], errors="coerce").fillna(0)
+
+    return features.astype("float64")
 
 
 def dataframe_to_csv_response(df: pd.DataFrame, filename: str) -> Response:

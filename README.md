@@ -52,6 +52,7 @@ gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 8 --timeout 120
 - 文字コード：`utf-8-sig` を優先、失敗時は `cp932` で再読込。
 - 必須26列（順序固定）：
   `slip_number, shipment_confirmed_date, subtotal_amount, total_line_count, bonsai, others, plastic_pots_trays, single_flower_vase, decorative_sand, saucers_mats, books, water_basins, bonsai_seeds, bonsai_class_items, bonsai_soil, bonsai_tools, bonsai_pots, bonsai_decor, lucky_bag, moss, moss_bonsai, chemicals_fertilizers, wire, decorative_stones, specification, dimensions`。
+- モデルへ渡す特徴量は 21 列（`total_line_count` 〜 `decorative_stones`）のみで、順序を固定して再構成しています。余計な列は推論には使いませんが、出力CSVでは保持されます。
 - 型変換：整数列は `int64`（欠損・不正値は0置換）、日時列は `pd.Timestamp("1970-01-01")` で補完、文字列列は空文字で補完。
 - 追加列は推論には使用せず、出力CSVでは保持します。
 - 不足列があれば 400 (Bad Request) で欠損列名を返します。
