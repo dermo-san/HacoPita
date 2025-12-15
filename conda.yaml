@@ -2,7 +2,7 @@ channels:
 - conda-forge
 - anaconda
 dependencies:
-- python=3.9.23
+- python=3.10.19
 - pip:
   - adal==1.2.7
   - annotated-types==0.7.0
@@ -230,15 +230,15 @@ dependencies:
 - bzip2=1.0.8
 - ca-certificates=2025.6.15
 - cloudpickle=2.2.1
-- cpython=3.9.23
+- cpython=3.10.19
 - filelock=3.18.0
 - fsspec=2025.5.1
 - gmp=6.3.0
 - gmpy2=2.2.1
-- holidays=0.75
+- holidays=0.86
 - icu=75.1
 - jinja2=3.1.6
-- joblib=1.2.0
+- joblib=1.4.2
 - libabseil=20250127.1
 - libexpat=2.7.0
 - libffi=3.4.6
@@ -271,7 +271,7 @@ dependencies:
 - py-cpuinfo=5.0.0
 - pybind11=2.13.6
 - pybind11-global=2.13.6
-- python_abi=3.9
+- python_abi=3.10
 - pytorch=2.6.0
 - scikit-learn=1.5.1
 - setuptools=78.1.1

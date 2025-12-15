@@ -37,7 +37,7 @@ Render での起動コマンド例：
 gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 8 --timeout 120
 ```
 
-- Python ランタイム：`runtime.txt` および `.python-version` で `3.9.23` を明示しているため、Render 側でも必ず 3.9 系を利用してください（3.12 などでビルドすると AzureML 依存が解決できません）。
+- Python ランタイム：`runtime.txt` および `.python-version` で `3.10.19` を明示しているため、Render 側でも必ず 3.10 系を利用してください（3.12 などでビルドすると AzureML 依存が解決できません）。
 
 ## API/画面仕様
 
@@ -64,7 +64,7 @@ gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 8 --timeout 120
 ## Render用メモ
 
 - Build：`pip install -r requirements.txt`
-- Runtime：Python 3.9.23（Renderのダッシュボードで指定）
+- Runtime：Python 3.10.19（Renderのダッシュボードで指定）
 - PORT は Render により注入されるため `app.py` では `PORT` 環境変数を参照して起動
 
 ## ライセンス
