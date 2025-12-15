@@ -17,7 +17,7 @@ metadata:
   azureml.base_image: mcr.microsoft.com/azureml/curated/ai-ml-automl:27
   azureml.engine: automl
 mlflow_version: 2.15.1
-model_size_bytes: 1889266
+model_size_bytes: 1744647
 model_uuid: 7ccca477a1484584a77919054b90f95d
 run_id: bonsai_test_0
 signature:

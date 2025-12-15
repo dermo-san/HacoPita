@@ -12,7 +12,10 @@
 ├── python_env.yaml        # MLflow由来の依存定義
 ├── MLmodel                # MLflowメタ情報
 ├── model.pkl              # 推論モデル本体（Renderへ同梱）
-├── model/                 # 元のAzureML成果物をそのまま配置
+├── model/                 # Azure ML から取得した最新成果物（参照用）
+│   ├── model.pkl
+│   ├── conda_env_v_1_0_0.yml
+│   └── scoring_file_v_2_0_0.py
 ├── templates/
 │   └── index.html         # アップロードフォーム
 └── static/
