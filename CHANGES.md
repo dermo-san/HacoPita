@@ -28,12 +28,13 @@
 
 #### `label_decoder.py`
 - `decode_predictions()`: 予測値をbox_idにデコード
-  - 予測値が既にbox_idか内部クラスIDかを自動判定
+  - `output_is_class_index`パラメータで予測値の形式を明示的に指定可能
+    - `True`: 常に内部クラスIDとして扱う（逆変換を実行）
+    - `False`: 常にbox_idとして扱う（そのまま返す）
+    - `None`: 自動判定（既存のロジック）
   - 内部クラスIDの場合は逆変換してbox_idに戻す
   - 逆変換後のbox_idが学習データに存在しない場合はエラー
-- `load_label_classes()`: ラベルクラスをJSONから読み込む
-- `save_label_classes_from_model()`: モデルからラベルクラスを取得して保存
-- `save_label_classes_from_training_data()`: 学習データからラベルクラスを生成して保存
+- `load_label_classes()`: ラベルクラスをJSONから読み込む（存在しない場合はエラー）
 
 #### `evaluate_predictions.py`
 - 予測結果の評価スクリプト
@@ -51,8 +52,11 @@
 - `process_file()`を修正：
   - `prepare_features()`を使用
   - `decode_predictions()`を使用して予測値をbox_idに変換
-- `load_label_classes_safe()`: ラベルクラスを安全に読み込む
+  - `output_is_class_index`パラメータを追加（環境変数から取得）
+- `load_label_classes_safe()`: ラベルクラスを読み込む（存在しない場合はエラー、生成は行わない）
+- `get_output_is_class_index()`: 環境変数から`output_is_class_index`の設定を取得
 - `get_training_box_id_set_safe()`: 学習データからbox_idの集合を取得
+- `load_model()`: ラベルクラスの自動生成を削除
 - 古い前処理関数を削除（`prepare_model_input()`, `normalize_input_dataframe()`等）
 
 #### `README.md`
@@ -107,13 +111,18 @@ pytest tests/test_inference.py -v
 
 ## 注意事項
 
-1. **ラベルクラスの生成**: 初回起動時に`label_classes.json`が自動生成されます。モデルの`classes_`属性から取得できない場合は、学習データから生成されます。
+1. **ラベルクラスの生成**: `label_classes.json`は推論側では生成しません。学習成果物として必ず同梱する必要があります。存在しない場合はエラーになります。
 
 2. **学習データのパス**: 学習データは `data/テスト用BoxID空欄学習データ3_サイズ情報追加版.csv` を想定しています。
 
 3. **必須特徴量**: 入力CSVには23列の必須特徴量がすべて含まれている必要があります。欠けている場合はエラーになります。
 
 4. **除外列**: 除外列（`slip_number`, `accessories`, `product_codes`等）は無視されますが、`slip_number`は突合キーとして必要です。
+
+5. **出力形式の明示的指定**: 環境変数 `OUTPUT_IS_CLASS_INDEX` で予測値の形式を明示的に指定できます：
+   - `OUTPUT_IS_CLASS_INDEX=true`: 予測値は常に内部クラスIDとして扱う
+   - `OUTPUT_IS_CLASS_INDEX=false`: 予測値は常にbox_idとして扱う
+   - 未設定: 自動判定
 
 ## 今後の改善点
 

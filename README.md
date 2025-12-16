@@ -83,9 +83,17 @@ gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 8 --timeout 120
 モデルが内部クラスID（0, 1, 2, ...）を返す場合、自動的にbox_idに逆変換されます。
 
 - `label_classes.json` にラベルクラス（box_idのリスト）が保存されます
-- モデル読み込み時に自動生成されます（モデルの `classes_` 属性から取得、または学習データから生成）
+- **重要**: `label_classes.json` は学習成果物として必ず同梱する必要があります。推論側では生成しません。
 - 予測値が既にbox_idの場合はそのまま使用されます
 - 逆変換後のbox_idが学習データに存在しない場合はエラーになります
+
+### 出力形式の明示的指定
+
+環境変数 `OUTPUT_IS_CLASS_INDEX` で予測値の形式を明示的に指定できます：
+
+- `OUTPUT_IS_CLASS_INDEX=true` または `1`: 予測値は常に内部クラスIDとして扱う（逆変換を実行）
+- `OUTPUT_IS_CLASS_INDEX=false` または `0`: 予測値は常にbox_idとして扱う（そのまま返す）
+- 未設定: 自動判定（既存のロジック）
 
 ## 評価
 

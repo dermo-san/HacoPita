@@ -117,12 +117,18 @@ def test_decode_predictions_internal_class_ids():
     # 内部クラスIDの予測値（0, 1, 2, ...）
     predictions = np.array([0, 1, 2, 3, 4, 5])
     
-    # デコード
+    # デコード（自動判定）
     decoded = decode_predictions(predictions, label_classes, train_box_id_set)
     
     # 検証
     assert decoded == ["7", "8", "9", "13", "18", "24"]
     assert all(bid in train_box_id_set for bid in decoded)
+    
+    # 明示的に内部クラスIDとして指定
+    decoded_explicit = decode_predictions(
+        predictions, label_classes, train_box_id_set, output_is_class_index=True
+    )
+    assert decoded_explicit == ["7", "8", "9", "13", "18", "24"]
 
 
 def test_decode_predictions_already_box_ids():
@@ -136,11 +142,17 @@ def test_decode_predictions_already_box_ids():
     # 既にbox_idの予測値
     predictions = np.array([7, 8, 9, 13, 18, 24])
     
-    # デコード
+    # デコード（自動判定）
     decoded = decode_predictions(predictions, label_classes, train_box_id_set)
     
     # 検証（文字列に変換される）
     assert decoded == ["7", "8", "9", "13", "18", "24"]
+    
+    # 明示的にbox_idとして指定
+    decoded_explicit = decode_predictions(
+        predictions, label_classes, train_box_id_set, output_is_class_index=False
+    )
+    assert decoded_explicit == ["7", "8", "9", "13", "18", "24"]
 
 
 def test_decode_predictions_invalid_box_id():

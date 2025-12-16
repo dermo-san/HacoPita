@@ -3,8 +3,9 @@
 """
 import json
 import logging
+import os
 from pathlib import Path
-from typing import List, Set, Union
+from typing import List, Optional, Set, Union
 
 import numpy as np
 import pandas as pd
@@ -47,6 +48,7 @@ def decode_predictions(
     predictions: Union[np.ndarray, List, pd.Series],
     label_classes: List[str],
     train_box_id_set: Set[str],
+    output_is_class_index: Optional[bool] = None,
 ) -> List[str]:
     """
     予測値をbox_idにデコードする
@@ -58,6 +60,10 @@ def decode_predictions(
         predictions: 予測値（内部クラスIDまたはbox_id）
         label_classes: 学習時のクラスリスト（box_idのリスト）
         train_box_id_set: 学習データに存在するbox_idの集合
+        output_is_class_index: 予測値が内部クラスIDかどうかを明示的に指定
+            - True: 常に内部クラスIDとして扱う（逆変換を実行）
+            - False: 常にbox_idとして扱う（そのまま返す）
+            - None: 自動判定（既存のロジック）
         
     Returns:
         box_idのリスト（文字列）
@@ -76,32 +82,47 @@ def decode_predictions(
     # 1次元に変換
     pred_array = pred_array.reshape(-1)
     
-    # ユニークな予測値を取得（文字列に変換）
-    pred_unique = set(str(int(p)) for p in pred_array if not pd.isna(p))
-    
-    # 予測値が既にbox_idかどうかを判定
-    # 判定方法：
-    # 1. train_box_id_setが空でない場合: pred_uniqueがtrain_box_id_setの部分集合なら「既にbox_id」
-    # 2. train_box_id_setが空の場合: 予測値がlabel_classesのインデックス範囲内にあり、
-    #    かつそのインデックスに対応するbox_idが予測値と一致しない場合は内部クラSIDと判定
-    if train_box_id_set:
-        is_already_box_id = pred_unique.issubset(train_box_id_set)
+    # output_is_class_indexが明示的に指定されている場合
+    if output_is_class_index is True:
+        # 常に内部クラスIDとして扱う
+        LOGGER.info(
+            "output_is_class_index=True: Treating predictions as internal class IDs"
+        )
+        is_already_box_id = False
+    elif output_is_class_index is False:
+        # 常にbox_idとして扱う
+        LOGGER.info(
+            "output_is_class_index=False: Treating predictions as box_ids"
+        )
+        is_already_box_id = True
     else:
-        # train_box_id_setが空の場合の判定
-        # 予測値がlabel_classesのインデックス範囲内にあり、かつ
-        # そのインデックスに対応するbox_idが予測値と一致しない場合は内部クラスID
-        label_classes_set = set(label_classes)
-        has_index_mismatch = any(
-            int(p) >= 0
-            and int(p) < len(label_classes)
-            and str(label_classes[int(p)]) != str(int(p))
-            for p in pred_array
-            if not pd.isna(p)
-        )
-        # 予測値がlabel_classesに含まれていて、かつインデックス不一致がない場合は既にbox_id
-        is_already_box_id = (
-            pred_unique.issubset(label_classes_set) and not has_index_mismatch
-        )
+        # 自動判定（既存のロジック）
+        # ユニークな予測値を取得（文字列に変換）
+        pred_unique = set(str(int(p)) for p in pred_array if not pd.isna(p))
+        
+        # 予測値が既にbox_idかどうかを判定
+        # 判定方法：
+        # 1. train_box_id_setが空でない場合: pred_uniqueがtrain_box_id_setの部分集合なら「既にbox_id」
+        # 2. train_box_id_setが空の場合: 予測値がlabel_classesのインデックス範囲内にあり、
+        #    かつそのインデックスに対応するbox_idが予測値と一致しない場合は内部クラスIDと判定
+        if train_box_id_set:
+            is_already_box_id = pred_unique.issubset(train_box_id_set)
+        else:
+            # train_box_id_setが空の場合の判定
+            # 予測値がlabel_classesのインデックス範囲内にあり、かつ
+            # そのインデックスに対応するbox_idが予測値と一致しない場合は内部クラスID
+            label_classes_set = set(label_classes)
+            has_index_mismatch = any(
+                int(p) >= 0
+                and int(p) < len(label_classes)
+                and str(label_classes[int(p)]) != str(int(p))
+                for p in pred_array
+                if not pd.isna(p)
+            )
+            # 予測値がlabel_classesに含まれていて、かつインデックス不一致がない場合は既にbox_id
+            is_already_box_id = (
+                pred_unique.issubset(label_classes_set) and not has_index_mismatch
+            )
     
     if is_already_box_id:
         LOGGER.info(

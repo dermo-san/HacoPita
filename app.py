@@ -13,8 +13,6 @@ from werkzeug.utils import secure_filename
 from label_decoder import (
     decode_predictions,
     load_label_classes,
-    save_label_classes_from_model,
-    save_label_classes_from_training_data,
 )
 from preprocessing import get_training_box_id_set, prepare_features
 from schema import (
@@ -33,12 +31,31 @@ TRAINING_CSV_PATH = (
 LOGGER = logging.getLogger(__name__)
 
 
+def get_output_is_class_index() -> Optional[bool]:
+    """
+    環境変数からoutput_is_class_indexの設定を取得する
+    
+    Returns:
+        True: 予測値は内部クラスIDとして扱う
+        False: 予測値はbox_idとして扱う
+        None: 自動判定
+    """
+    env_value = os.environ.get("OUTPUT_IS_CLASS_INDEX", "").lower().strip()
+    if env_value == "true" or env_value == "1":
+        return True
+    elif env_value == "false" or env_value == "0":
+        return False
+    else:
+        return None
+
+
 def create_app() -> Flask:
     app = Flask(__name__)
 
     model, model_error = load_model()
     label_classes, label_error = load_label_classes_safe()
     train_box_id_set = get_training_box_id_set_safe()
+    output_is_class_index = get_output_is_class_index()
 
     @app.route("/", methods=["GET"])
     def index():
@@ -75,7 +92,7 @@ def create_app() -> Flask:
 
         try:
             result_df, predictions = process_file(
-                uploaded_file, model, label_classes, train_box_id_set
+                uploaded_file, model, label_classes, train_box_id_set, output_is_class_index
             )
         except PredictionError as exc:
             return (
@@ -104,7 +121,7 @@ def create_app() -> Flask:
 
         try:
             result_df, predictions = process_file(
-                uploaded_file, model, label_classes, train_box_id_set
+                uploaded_file, model, label_classes, train_box_id_set, output_is_class_index
             )
         except PredictionError as exc:
             return jsonify({"error": exc.message}), exc.status_code
@@ -135,17 +152,6 @@ def load_model() -> Tuple[object, str]:
     try:
         with MODEL_PATH.open("rb") as file:
             model = pickle.load(file)
-        
-        # モデルからラベルクラスを取得して保存（初回のみ）
-        try:
-            from label_decoder import LABEL_CLASSES_JSON_PATH
-            if not LABEL_CLASSES_JSON_PATH.exists():
-                save_label_classes_from_model(model)
-        except Exception as exc:
-            LOGGER.warning(
-                "Failed to save label classes from model: %s", exc
-            )
-        
         return model, ""
     except Exception as exc:  # pragma: no cover - defensive logging
         message = f"モデルの読み込みに失敗しました: {exc}"
@@ -155,31 +161,25 @@ def load_model() -> Tuple[object, str]:
 
 def load_label_classes_safe() -> Tuple[List[str], str]:
     """
-    ラベルクラスを安全に読み込む
-    モデルから取得できない場合は学習データから取得を試みる
+    ラベルクラスを読み込む
+    label_classes.jsonが存在しない場合はエラーを返す（生成は行わない）
     """
     try:
+        from label_decoder import LABEL_CLASSES_JSON_PATH
         label_classes = load_label_classes()
         return label_classes, ""
-    except FileNotFoundError:
-        # label_classes.jsonが存在しない場合、学習データから生成を試みる
-        LOGGER.info(
-            "label_classes.json not found. Attempting to generate from training data..."
+    except FileNotFoundError as exc:
+        error_message = (
+            f"label_classes.json not found: {LABEL_CLASSES_JSON_PATH}. "
+            "This file must be included as a training artifact. "
+            "Please ensure label_classes.json is present in the repository."
         )
-        try:
-            if TRAINING_CSV_PATH.exists():
-                label_classes = save_label_classes_from_training_data(
-                    str(TRAINING_CSV_PATH)
-                )
-                return label_classes, ""
-            else:
-                return [], (
-                    f"label_classes.json not found and training CSV not found: {TRAINING_CSV_PATH}"
-                )
-        except Exception as exc:
-            return [], f"Failed to load label classes: {exc}"
+        LOGGER.error(error_message)
+        return [], error_message
     except Exception as exc:
-        return [], f"Failed to load label classes: {exc}"
+        error_message = f"Failed to load label classes: {exc}"
+        LOGGER.error(error_message)
+        return [], error_message
 
 
 def get_training_box_id_set_safe() -> set:
@@ -216,6 +216,7 @@ def process_file(
     model,
     label_classes: List[str],
     train_box_id_set: set,
+    output_is_class_index: Optional[bool] = None,
 ) -> Tuple[pd.DataFrame, List[str]]:
     """
     推論処理のメイン関数
@@ -225,6 +226,7 @@ def process_file(
         model: 学習済みモデル
         label_classes: ラベルクラス（box_idのリスト）
         train_box_id_set: 学習データに存在するbox_idの集合
+        output_is_class_index: 予測値が内部クラスIDかどうか（Noneの場合は自動判定）
         
     Returns:
         (result_df, predictions): 結果DataFrameと予測box_idのリスト
@@ -268,7 +270,7 @@ def process_file(
     # 予測値をbox_idにデコード
     try:
         decoded_predictions = decode_predictions(
-            raw_predictions, label_classes, train_box_id_set
+            raw_predictions, label_classes, train_box_id_set, output_is_class_index
         )
     except ValueError as exc:
         raise PredictionError(
