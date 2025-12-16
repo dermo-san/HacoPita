@@ -1,7 +1,6 @@
 import io
 import logging
 import os
-import pickle
 from pathlib import Path
 from typing import List, Tuple
 
@@ -10,82 +9,41 @@ import pandas as pd
 from flask import Flask, Response, jsonify, render_template, request
 from werkzeug.utils import secure_filename
 
-REQUIRED_COLUMNS: List[str] = [
-    "slip_number",
-    "shipment_confirmed_date",
-    "subtotal_amount",
-    "total_line_count",
-    "bonsai",
-    "others",
-    "plastic_pots_trays",
-    "single_flower_vase",
-    "decorative_sand",
-    "saucers_mats",
-    "books",
-    "water_basins",
-    "bonsai_seeds",
-    "bonsai_class_items",
-    "bonsai_soil",
-    "bonsai_tools",
-    "bonsai_pots",
-    "bonsai_decor",
-    "lucky_bag",
-    "moss",
-    "moss_bonsai",
-    "chemicals_fertilizers",
-    "wire",
-    "decorative_stones",
-    "specification",
-    "dimensions",
-]
+from preprocessing import build_features
+from predictor import PredictorConfigurationError, build_predictor
+from schema import FEATURE_COLUMNS_24, ID_COLUMN, load_feature_columns
 
-INTEGER_COLUMNS = [
-    "slip_number",
-    "subtotal_amount",
-    "total_line_count",
-    "bonsai",
-    "others",
-    "plastic_pots_trays",
-    "single_flower_vase",
-    "decorative_sand",
-    "saucers_mats",
-    "books",
-    "water_basins",
-    "bonsai_seeds",
-    "bonsai_class_items",
-    "bonsai_soil",
-    "bonsai_tools",
-    "bonsai_pots",
-    "bonsai_decor",
-    "lucky_bag",
-    "moss",
-    "moss_bonsai",
-    "chemicals_fertilizers",
-    "wire",
-    "decorative_stones",
-    "specification",
-]
-
-DATETIME_COLUMNS = ["shipment_confirmed_date"]
-STRING_COLUMNS = ["dimensions"]
-FALLBACK_DATE = pd.Timestamp("1970-01-01")
 MODEL_PATH = Path(__file__).resolve().parent / "model.pkl"
 
 
 def create_app() -> Flask:
     app = Flask(__name__)
 
-    model, model_error = load_model()
+    feature_columns, schema_error = resolve_feature_columns()
+    predictor, predictor_error = initialize_predictor()
+    model_error = predictor_error or schema_error
 
     @app.route("/", methods=["GET"])
     def index():
-        return render_template("index.html", model_error=model_error)
+        return render_template(
+            "index.html",
+            model_error=model_error,
+            error_message=None,
+            feature_columns=feature_columns,
+            feature_column_count=len(feature_columns),
+        )
 
     @app.route("/predict", methods=["POST"])
     def predict():
         if model_error:
             return (
-                render_template("index.html", error_message=model_error, model_error=model_error),
+                render_template(
+                    "index.html",
+                    error_message=model_error,
+                    model_error=model_error,
+                    feature_columns=feature_columns,
+                    feature_column_count=len(feature_columns),
+                ),
                 500,
             )
 
@@ -96,18 +54,24 @@ def create_app() -> Flask:
                     "index.html",
                     error_message="CSVファイルを選択してください。",
                     model_error=model_error,
+                    feature_columns=feature_columns,
+                    feature_column_count=len(feature_columns),
                 ),
                 400,
             )
 
         try:
-            result_df, predictions = process_file(uploaded_file, model)
+            result_df, predictions = process_file(
+                uploaded_file, predictor, feature_columns
+            )
         except PredictionError as exc:
             return (
                 render_template(
                     "index.html",
                     error_message=exc.message,
                     model_error=model_error,
+                    feature_columns=feature_columns,
+                    feature_column_count=len(feature_columns),
                 ),
                 exc.status_code,
             )
@@ -127,18 +91,14 @@ def create_app() -> Flask:
             return jsonify({"error": "file field is required"}), 400
 
         try:
-            result_df, predictions = process_file(uploaded_file, model)
+            result_df, predictions = process_file(
+                uploaded_file, predictor, feature_columns
+            )
         except PredictionError as exc:
             return jsonify({"error": exc.message}), exc.status_code
 
         if request.args.get("format") == "json":
-            payload = [
-                {
-                    "slip_number": int(result_df.iloc[i]["slip_number"]),
-                    "predicted_box_id": int(pred),
-                }
-                for i, pred in enumerate(predictions)
-            ]
+            payload = build_api_payload(result_df, predictions)
             return jsonify({"predictions": payload})
 
         return dataframe_to_csv_response(
@@ -148,46 +108,49 @@ def create_app() -> Flask:
     return app
 
 
-def load_model() -> Tuple[object, str]:
-    if not MODEL_PATH.exists():
-        message = f"モデルファイルが見つかりません: {MODEL_PATH}"
-        logging.error(message)
-        return None, message
-
+def resolve_feature_columns() -> Tuple[List[str], str]:
     try:
-        with MODEL_PATH.open("rb") as file:
-            model = pickle.load(file)
-        return model, ""
-    except Exception as exc:  # pragma: no cover - defensive logging
-        message = f"モデルの読み込みに失敗しました: {exc}"
-        logging.exception(message)
-        return None, message
+        columns = load_feature_columns()
+        return columns, ""
+    except ValueError as exc:
+        logging.error("Feature column validation failed: %s", exc)
+        return FEATURE_COLUMNS_24, str(exc)
 
 
-class PredictionError(Exception):
-    def __init__(self, message: str, status_code: int = 400) -> None:
-        super().__init__(message)
-        self.message = message
-        self.status_code = status_code
+def initialize_predictor():
+    try:
+        predictor = build_predictor(MODEL_PATH)
+        return predictor, ""
+    except PredictorConfigurationError as exc:
+        logging.error("Predictor initialization failed: %s", exc)
+        return None, str(exc)
 
 
-def process_file(file_storage, model) -> Tuple[pd.DataFrame, List[int]]:
+def process_file(file_storage, predictor, feature_columns):
     input_df = read_csv_with_fallback(file_storage)
-    missing = [col for col in REQUIRED_COLUMNS if col not in input_df.columns]
-    if missing:
-        raise PredictionError(
-            f"必須列が不足しています: {', '.join(missing)}", status_code=400
-        )
-
-    features = prepare_features(input_df)
 
     try:
-        raw_predictions = model.predict(features)
-    except Exception as exc:
-        raise PredictionError(f"推論に失敗しました: {exc}", status_code=500) from exc
+        features = build_features(input_df, feature_columns=feature_columns)
+    except ValueError as exc:
+        raise PredictionError(str(exc), status_code=400) from exc
+    except AssertionError as exc:
+        raise PredictionError(str(exc), status_code=500) from exc
+
+    try:
+        raw_predictions = predictor.predict(features)
+    except Exception as exc:  # pragma: no cover - defensive logging
+        logging.exception("Predictor failed to return results.")
+        raise PredictionError(f"推論に失敗しました: {exc}", status_code=502) from exc
 
     flattened = np.asarray(raw_predictions).reshape(-1)
     predictions = pd.Series(flattened).fillna(0).astype("int64")
+
+    if len(predictions) != len(input_df):
+        raise PredictionError(
+            "推論件数が入力件数と一致しません。Azure ML側のログを確認してください。",
+            status_code=502,
+        )
+
     result_df = input_df.copy()
     result_df["predicted_box_id"] = predictions.values
     return result_df, predictions.tolist()
@@ -208,28 +171,31 @@ def read_csv_with_fallback(file_storage) -> pd.DataFrame:
 
     raise PredictionError(
         "CSVの読み込みに失敗しました (文字コードを判定できませんでした)。", 400
+    ) from last_error
+
+
+def build_api_payload(result_df: pd.DataFrame, predictions: List[int]) -> List[dict]:
+    payload = []
+    id_available = ID_COLUMN in result_df.columns
+    id_series = (
+        pd.to_numeric(result_df[ID_COLUMN], errors="coerce") if id_available else None
     )
 
+    for i, pred in enumerate(predictions):
+        record = {"predicted_box_id": int(pred)}
+        if id_available and pd.notna(id_series.iloc[i]):
+            record[ID_COLUMN] = int(id_series.iloc[i])
+        else:
+            record["row_index"] = i
+        payload.append(record)
+    return payload
 
-def prepare_features(df: pd.DataFrame) -> pd.DataFrame:
-    features = df[REQUIRED_COLUMNS].copy()
 
-    for column in INTEGER_COLUMNS:
-        features[column] = (
-            pd.to_numeric(features[column], errors="coerce")
-            .fillna(0)
-            .astype("int64")
-        )
-
-    for column in DATETIME_COLUMNS:
-        features[column] = pd.to_datetime(features[column], errors="coerce").fillna(
-            FALLBACK_DATE
-        )
-
-    for column in STRING_COLUMNS:
-        features[column] = features[column].fillna("").astype(str)
-
-    return features
+class PredictionError(Exception):
+    def __init__(self, message: str, status_code: int = 400) -> None:
+        super().__init__(message)
+        self.message = message
+        self.status_code = status_code
 
 
 def dataframe_to_csv_response(df: pd.DataFrame, filename: str) -> Response:

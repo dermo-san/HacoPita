@@ -1,22 +1,25 @@
 # HacoPita
 
-箱ID (`predicted_box_id`) を機械学習モデルで推論し、入力CSVに列を追加してダウンロードできるWebアプリです。Flask + gunicorn で動作し、Render Web Service を想定しています。
+箱ID (`predicted_box_id`) を機械学習モデルで推論し、入力CSVに列を追加してダウンロードできるWebアプリです。  
+Azure ML オンラインエンドポイントを第一候補として呼び出し、設定されていない場合のみローカルの `model.pkl` にフォールバックします。Flask + gunicorn で動作し、Render Web Service を想定しています。
 
 ## リポジトリ構成
 
 ```
 .
-├── app.py                 # Flaskエントリポイント（PORT環境変数で待ち受け）
+├── app.py                 # Flaskエントリポイント。Azure ML/ローカル推論を自動判別
+├── schema.py              # 24特徴量やエイリアスの単一ソース
+├── preprocessing.py       # build_features() で前処理を一元化
+├── predictor.py           # Azure ML オンラインエンドポイント / ローカル推論のラッパー
+├── model_features.json    # 学習時に保存する 24特徴量リスト (順序固定)
 ├── requirements.txt       # 既存のAzureML依存を含む推論環境
-├── conda.yaml             # MLflow由来の依存定義
-├── python_env.yaml        # MLflow由来の依存定義
-├── MLmodel                # MLflowメタ情報
-├── model.pkl              # 推論モデル本体（Renderへ同梱）
+├── conda.yaml / python_env.yaml / MLmodel  # MLflow由来の依存メタ情報
+├── model.pkl              # ローカル推論用モデル（Renderへ同梱する場合のみ使用）
 ├── model/                 # 元のAzureML成果物をそのまま配置
 ├── templates/
 │   └── index.html         # アップロードフォーム
 └── static/
-    └── sample_input.csv   # 入力サンプル
+    └── sample_input.csv   # 入力サンプル（24特徴量、box_idなし）
 ```
 
 ## 実行方法
@@ -36,6 +39,12 @@ gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 8 --timeout 120
 
 - Python ランタイム：`runtime.txt` および `.python-version` で `3.9.23` を明示しているため、Render 側でも必ず 3.9 系を利用してください（3.12 などでビルドすると AzureML 依存が解決できません）。
 
+## Azure ML オンラインエンドポイント
+
+- 環境変数 `AZUREML_ENDPOINT_URL` と `AZUREML_ENDPOINT_KEY`（または `AZUREML_ENDPOINT_TOKEN`）を設定すると Azure ML オンラインエンドポイントを呼び出します。`AZUREML_DEPLOYMENT_NAME` を指定すればデプロイメントを固定できます。
+- いずれかの秘密情報が未設定の場合は自動的に `model.pkl` を読み込むローカル推論モードにフォールバックします。
+- 送信payloadは `build_features()` が返す24列のみで構成され、送信前に `X.shape[1] == 24` を検証してログに列名を出力します。
+
 ## API/画面仕様
 
 - `GET /`：CSVアップロードフォームと仕様説明を表示。サンプルCSV (`static/sample_input.csv`) をダウンロード可能。
@@ -43,26 +52,75 @@ gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 8 --timeout 120
 - `POST /api/predict`：`multipart/form-data` の `file` フィールドを受け取り、
   - `?format=json` 付きでJSON（`slip_number`, `predicted_box_id` の配列）
   - それ以外はCSVを添付ダウンロード
+- `slip_number` 列が存在しない/空欄でも推論結果は `row_index` とともに返却されます。
 
 ## CSV要件
 
 - 文字コード：`utf-8-sig` を優先、失敗時は `cp932` で再読込。
-- 必須26列（順序固定）：
-  `slip_number, shipment_confirmed_date, subtotal_amount, total_line_count, bonsai, others, plastic_pots_trays, single_flower_vase, decorative_sand, saucers_mats, books, water_basins, bonsai_seeds, bonsai_class_items, bonsai_soil, bonsai_tools, bonsai_pots, bonsai_decor, lucky_bag, moss, moss_bonsai, chemicals_fertilizers, wire, decorative_stones, specification, dimensions`。
-- 型変換：整数列は `int64`（欠損・不正値は0置換）、日時列は `pd.Timestamp("1970-01-01")` で補完、文字列列は空文字で補完。
-- 追加列は推論には使用せず、出力CSVでは保持します。
+- 推論に使用するのは以下24列のみ（順序固定）。入力CSVに余分な列があっても構いませんが、いずれかが欠けるとエラーになります。
+  1. `total_items`
+  2. `bonsai`
+  3. `other`
+  4. `plastic_pots_trays`
+  5. `single_flower_vase`
+  6. `decorative_sand`
+  7. `saucers_mats`
+  8. `books`
+  9. `suiban`
+  10. `bonsai_seeds`
+  11. `for_bonsai_classes`
+  12. `bonsai_soil`
+  13. `bonsai_tools`
+  14. `bonsai_pots`
+  15. `bonsai_decorations`
+  16. `lucky_bag`
+  17. `moss`
+  18. `moss_bonsai`
+  19. `chemicals_fertilizer`
+  20. `wire`
+  21. `decorative_stones`
+  22. `accessories`
+  23. `max_item_long_cm`
+  24. `sum_item_volume_cm3`
+- `others` → `other`、`water_basins` → `suiban` など互換カラムは `schema.ALISES` で自動的に正規化されます。
+- 24列すべてを `pd.to_numeric(errors="coerce")` → `fillna(0)` で数値化し、最終的に `X.shape[1] == 24` を `assert` しています。
+- `box_id` 列は入力にあってもなくても構いません。推論に利用はされず、出力CSVではそのまま保持されます。
 - 不足列があれば 400 (Bad Request) で欠損列名を返します。
 
-## モデルロード
+## モデルとスキーマの同期
 
-- アプリ起動時に `model.pkl` を読み込み、リクエストごとに再ロードは行いません。
-- 読み込み失敗や推論例外時は、ユーザー向けにエラーメッセージを返し、アプリを落としません。
+- 24列の順序を `schema.FEATURE_COLUMNS_24` に固定し、学習ジョブでは同じリストを `model_features.json` として成果物に出力します。
+- 推論側はアプリ起動時に `model_features.json` を読み込み、内容が `FEATURE_COLUMNS_24` と異なる場合は起動エラーとして扱います（旧21列モデルを誤ってデプロイしている場合の早期検知）。
+- `build_features()` も同じ `model_features.json` を参照し、推論payloadの真実を単一ソースに固定します。
+
+## Azure ML モデル入れ替え手順（21 → 24列）
+
+1. **学習スクリプトの更新**
+   - `schema.py` をインポートし、`X = df[FEATURE_COLUMNS_24]` で入力列を固定します。
+   - `build_features()` を再利用すれば学習・推論で同じ前処理を使い回せます。
+2. **成果物の書き出し**
+   - `model.pkl`（または MLflow モデル）と同じディレクトリに `model_features.json` を保存します。内容は `FEATURE_COLUMNS_24` の順序付きリストそのものです。
+   - モデルが内部クラスIDを返す場合は `label_classes.json` も同梱してください。
+3. **モデル登録 & デプロイ**
+   - Azure ML にモデルを登録し、`model_features.json` を含む形で新しいバージョンを Online endpoint の deployment に割り当てます（旧 21 列モデルへの参照を外す）。
+4. **疎通確認**
+   - `tests/test_inference.py` を通して前処理が 24 列のままになっていることを確認し、Render/本番アプリから Azure ML endpoint を呼び出して `fitted data (21)` エラーが消えていることをチェックします。
+   - エンドポイントのログに送信列数 (`n_cols=24`) が出力されるため、列不一致が再発した場合も即座に検知できます。
 
 ## Render用メモ
 
 - Build：`pip install -r requirements.txt`
 - Runtime：Python 3.9.23（Renderのダッシュボードで指定）
 - PORT は Render により注入されるため `app.py` では `PORT` 環境変数を参照して起動
+
+## テスト
+
+`pytest` を実行すると `tests/test_inference.py` が以下を検証します。
+
+- 余分な列があっても `build_features()` が 24 列のみを返すこと
+- 必須24列のうち1列でも欠けると不足列名を含む例外になること
+- box_id が欠けていても前処理が通ること
+- 履歴互換の列名（others など）がエイリアスで補正されること
 
 ## ライセンス
 

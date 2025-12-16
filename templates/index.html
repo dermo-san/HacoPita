@@ -40,39 +40,21 @@
             <button type="submit">推論してCSVをダウンロード</button>
         </form>
         <p class="alert info">※ 文字コードは <strong>UTF-8 (BOM付き含む)</strong> または <strong>CP932</strong> に対応しています。</p>
-        <h2>必須列（26列）</h2>
+        <h2>必須列（{{ feature_column_count }}列）</h2>
         <div class="columns">
+            {% set half = (feature_column_count + 1) // 2 %}
             <ul>
-                <li>slip_number (integer)</li>
-                <li>shipment_confirmed_date (datetime)</li>
-                <li>subtotal_amount (integer)</li>
-                <li>total_line_count (integer)</li>
-                <li>bonsai (integer)</li>
-                <li>others (integer)</li>
-                <li>plastic_pots_trays (integer)</li>
-                <li>single_flower_vase (integer)</li>
-                <li>decorative_sand (integer)</li>
-                <li>saucers_mats (integer)</li>
-                <li>books (integer)</li>
-                <li>water_basins (integer)</li>
-                <li>bonsai_seeds (integer)</li>
+                {% for column in feature_columns[:half] %}
+                <li>{{ column }} (numeric)</li>
+                {% endfor %}
             </ul>
             <ul>
-                <li>bonsai_class_items (integer)</li>
-                <li>bonsai_soil (integer)</li>
-                <li>bonsai_tools (integer)</li>
-                <li>bonsai_pots (integer)</li>
-                <li>bonsai_decor (integer)</li>
-                <li>lucky_bag (integer)</li>
-                <li>moss (integer)</li>
-                <li>moss_bonsai (integer)</li>
-                <li>chemicals_fertilizers (integer)</li>
-                <li>wire (integer)</li>
-                <li>decorative_stones (integer)</li>
-                <li>specification (integer)</li>
-                <li>dimensions (string)</li>
+                {% for column in feature_columns[half:] %}
+                <li>{{ column }} (numeric)</li>
+                {% endfor %}
             </ul>
         </div>
+        <p>上記24列は順序固定です。CSVに余分な列があっても構いませんが、いずれかが欠けると推論できません。box_id列は不要（空欄でも可）です。</p>
         <h2>出力仕様</h2>
         <ul>
             <li>アップロードしたCSVの列を保持し、末尾に <code>predicted_box_id</code> を追加してダウンロード</li>

@@ -1,3 +1,3 @@
-slip_number,shipment_confirmed_date,subtotal_amount,total_line_count,bonsai,others,plastic_pots_trays,single_flower_vase,decorative_sand,saucers_mats,books,water_basins,bonsai_seeds,bonsai_class_items,bonsai_soil,bonsai_tools,bonsai_pots,bonsai_decor,lucky_bag,moss,moss_bonsai,chemicals_fertilizers,wire,decorative_stones,specification,dimensions,store_abbreviation
-10001,2023-10-01,4500,6,1,0,2,0,0,1,0,0,0,0,1,0,0,0,0,0,0,0,0,0,1,small,AB
-10002,2023-10-02,10500,9,2,1,3,0,0,2,0,0,0,0,2,0,0,0,1,0,0,0,0,0,1,medium,CD
+slip_number,total_items,bonsai,other,plastic_pots_trays,single_flower_vase,decorative_sand,saucers_mats,books,suiban,bonsai_seeds,for_bonsai_classes,bonsai_soil,bonsai_tools,bonsai_pots,bonsai_decorations,lucky_bag,moss,moss_bonsai,chemicals_fertilizer,wire,decorative_stones,accessories,max_item_long_cm,sum_item_volume_cm3,notes
+50001,12,4,1,0,2,0,1,0,0,1,0,3,0,0,0,0,0,0,0,0,0,0,45,3900,"store AB, 2 orders"
+50002,9,2,0,1,0,0,0,0,0,0,1,1,0,0,0,1,0,0,0,0,0,1,30,2100,"no slip number duplicates"
