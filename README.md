@@ -17,6 +17,8 @@
 │   ├── conda_env_v_1_0_0.yml
 │   └── scoring_file_v_2_0_0.py
 ├── expected_features.json # 特徴量リストのフォールバック（自動取得失敗時に参照）
+├── data/
+│   └── テスト用BoxID空欄学習データ3_サイズ情報追加版.csv # 特徴量推定用の学習データ抜粋
 ├── tests/
 │   └── smoke_test.py      # サンプルCSVを使った簡易スモークテスト
 ├── templates/
@@ -50,14 +52,16 @@ gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 8 --timeout 120
   - `?format=json` 付きでJSON（`slip_number`, `predicted_box_id` の配列）
   - それ以外はCSVを添付ダウンロード
 
-## CSV要件
-
+- 特徴量26列の自動取得順
+  1. `model/scoring_file_v_2_0_0.py` の `data_sample` のキーを解析
+  2. 1で確定できなければ `data/テスト用BoxID空欄学習データ3_サイズ情報追加版.csv`（または `TRAINING_FEATURE_SAMPLE` 環境変数で指定したCSV）のヘッダーから `box_id` や ID列を除いて推定
+  3. それでも取得できない場合だけ `expected_features.json` を参照
 - 文字コード：`utf-8-sig` を優先、失敗時は `cp932` で再読込。
-- 入力CSVで必須なのは `slip_number` のみです（出力で行を特定するため）。学習時に使った特徴量21列は `model.pkl` の `feature_names_in_` または `model/scoring_file_v_2_0_0.py` の `data_sample` から自動抽出し、必要に応じて `expected_features.json` をフォールバックとして参照します。
-- 入力CSVの列名が `total_items`（`total_line_count` の別名）などに変わっていても、既知のエイリアスを自動的に正規列へマッピングします（例：`other`→`others`, `suiban`→`water_basins`, `for_bonsai_classes`→`bonsai_class_items`, `bonsai_decorations`→`bonsai_decor` 等）。
-- モデルへ渡す特徴量は自動抽出された21列（`total_line_count` 〜 `decorative_stones`）のみで、`pd.to_numeric(errors="coerce")` により数値化し、NaN は 0 で埋めます。余計な列（shipment_confirmed_date、specification など）は推論には渡さず、出力CSVには保持します。
-- 型変換：整数列は `int64`（欠損・不正値は0置換）、日時列は `pd.Timestamp("1970-01-01")` で補完、文字列列は空文字で補完。
-- 特徴量自体が不足している場合は 400 (Bad Request) で欠損列名（もしくは alias がない列名）を返します。
+- 入力CSVで必須なのは `slip_number` のみ（出力時に行を紐づけるため）。他の列は自動的に 26 特徴量へマッピング・補完します。欠損列は 0 で生成し、旧名称（`total_line_count` など）でも既知の alias から正規列へ変換します。
+- モデルへ渡す26列（順序固定）：
+  `total_items, bonsai, other, plastic_pots_trays, single_flower_vase, decorative_sand, saucers_mats, books, suiban, bonsai_seeds, for_bonsai_classes, bonsai_soil, bonsai_tools, bonsai_pots, bonsai_decorations, lucky_bag, moss, moss_bonsai, chemicals_fertilizer, wire, decorative_stones, accessories, max_item_long_cm, max_item_mid_cm, max_item_short_cm, sum_item_volume_cm3`
+- 余計な列（`product_codes`, `sizes_raw`, `sum_item_area_cm2`, `avg_item_long_cm`, `unique_items` など）はモデルには渡さず、出力CSVには保持します。
+- 型変換：特徴量列は `pd.to_numeric(errors="coerce")` で数値化し、NaN は 0 で補完します。
 
 ## モデルロード
 
@@ -81,3 +85,4 @@ python tests/smoke_test.py
 ## ライセンス
 
 社内利用を想定しているため別途指示に従ってください。
+- `TRAINING_FEATURE_SAMPLE` 環境変数を設定すると学習データCSVの場所を上書きできます。未設定の場合は `data/テスト用BoxID空欄学習データ3_サイズ情報追加版.csv` とリポジトリ内の `*学習データ*.csv` を自動探索します。

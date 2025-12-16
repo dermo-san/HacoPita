@@ -8,20 +8,15 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from app import (  # noqa: E402
-    determine_expected_features,
-    load_model,
-    normalize_input_dataframe,
-    prepare_model_input,
-)
+from app import get_expected_features, normalize_input_dataframe, prepare_model_input  # noqa: E402
 
 ALIAS_RENAMES = {
-    "total_line_count": "total_items",
-    "others": "other",
-    "water_basins": "suiban",
-    "bonsai_class_items": "for_bonsai_classes",
-    "bonsai_decor": "bonsai_decorations",
-    "chemicals_fertilizers": "chemicals_fertilizer",
+    "total_items": "total_line_count",
+    "other": "others",
+    "suiban": "water_basins",
+    "for_bonsai_classes": "bonsai_class_items",
+    "bonsai_decorations": "bonsai_decor",
+    "chemicals_fertilizer": "chemicals_fertilizers",
 }
 
 
@@ -29,14 +24,7 @@ def main() -> None:
     sample_path = Path(__file__).resolve().parents[1] / "static" / "sample_input.csv"
     df = pd.read_csv(sample_path)
 
-    model, model_error = load_model()
-    if model_error:
-        print(
-            f"警告: モデル読み込みは失敗しました ({model_error})。feature list の自動取得のみ検証します。"
-        )
-        model = None
-
-    features, feature_error = determine_expected_features(model)
+    features, feature_error = get_expected_features()
     assert feature_error == "", f"特徴量取得でエラー: {feature_error}"
 
     variants = {

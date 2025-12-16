@@ -13,6 +13,11 @@ import pandas as pd
 from flask import Flask, Response, jsonify, render_template, request
 from werkzeug.utils import secure_filename
 
+BASE_DIR = Path(__file__).resolve().parent
+EXPECTED_FEATURES_COUNT = 26
+TRAINING_SAMPLE_ENV = "TRAINING_FEATURE_SAMPLE"
+TRAINING_SAMPLE_PATTERN = "*学習データ*.csv"
+
 REQUIRED_COLUMNS: List[str] = ["slip_number"]
 
 INTEGER_COLUMNS = [
@@ -50,12 +55,32 @@ SCORING_FILE_PATH = Path(__file__).resolve().parent / "model" / "scoring_file_v_
 EXPECTED_FEATURES_JSON_PATH = Path(__file__).resolve().parent / "expected_features.json"
 LOGGER = logging.getLogger(__name__)
 FEATURE_ALIASES: Dict[str, List[str]] = {
-    "total_line_count": ["total_items"],
-    "others": ["other"],
-    "water_basins": ["suiban"],
-    "bonsai_class_items": ["for_bonsai_classes"],
-    "bonsai_decor": ["bonsai_decorations"],
-    "chemicals_fertilizers": ["chemicals_fertilizer"],
+    "total_items": ["total_line_count"],
+    "bonsai": [],
+    "other": ["others"],
+    "plastic_pots_trays": [],
+    "single_flower_vase": [],
+    "decorative_sand": [],
+    "saucers_mats": [],
+    "books": [],
+    "suiban": ["water_basins"],
+    "bonsai_seeds": [],
+    "for_bonsai_classes": ["bonsai_class_items"],
+    "bonsai_soil": [],
+    "bonsai_tools": [],
+    "bonsai_pots": [],
+    "bonsai_decorations": ["bonsai_decor"],
+    "lucky_bag": [],
+    "moss": [],
+    "moss_bonsai": [],
+    "chemicals_fertilizer": ["chemicals_fertilizers"],
+    "wire": [],
+    "decorative_stones": [],
+    "accessories": [],
+    "max_item_long_cm": [],
+    "max_item_mid_cm": [],
+    "max_item_short_cm": [],
+    "sum_item_volume_cm3": [],
 }
 
 
@@ -63,7 +88,7 @@ def create_app() -> Flask:
     app = Flask(__name__)
 
     model, model_error = load_model()
-    expected_features, feature_error = determine_expected_features(model)
+    expected_features, feature_error = get_expected_features()
 
     @app.route("/", methods=["GET"])
     def index():
@@ -167,42 +192,71 @@ def load_model() -> Tuple[object, str]:
         return None, message
 
 
-def determine_expected_features(model) -> Tuple[List[str], str]:
+def get_expected_features() -> Tuple[List[str], str]:
     try:
-        from_model = infer_features_from_model(model)
-        if from_model:
-            log_detected_features(from_model, "model.pkl feature_names_in_")
-            return from_model, ""
-
         from_scoring = infer_features_from_scoring_file()
-        if from_scoring:
+        if validate_feature_list(from_scoring):
+            persist_expected_features(from_scoring)
             log_detected_features(from_scoring, SCORING_FILE_PATH)
             return from_scoring, ""
+        if from_scoring:
+            LOGGER.warning(
+                "scoring_file_v_2_0_0.py から %s 列を検出しましたが、期待数 %s と一致しません。",
+                len(from_scoring),
+                EXPECTED_FEATURES_COUNT,
+            )
+    except Exception as exc:
+        LOGGER.exception("scoring_file_v_2_0_0.py の解析に失敗: %s", exc)
 
+    try:
+        from_training = infer_features_from_training_sample()
+        if validate_feature_list(from_training):
+            persist_expected_features(from_training)
+            log_detected_features(from_training, "training_sample_csv")
+            return from_training, ""
+        if from_training:
+            LOGGER.warning(
+                "学習データから取得した列数が %s でした（期待 %s）。",
+                len(from_training),
+                EXPECTED_FEATURES_COUNT,
+            )
+    except Exception as exc:
+        LOGGER.exception("学習データからの特徴量推定に失敗: %s", exc)
+
+    try:
         from_json = load_features_from_json()
-        if from_json:
+        if validate_feature_list(from_json):
             log_detected_features(from_json, EXPECTED_FEATURES_JSON_PATH)
             return from_json, ""
-
-        message = (
-            "特徴量一覧を model.pkl / model/scoring_file_v_2_0_0.py / "
-            "expected_features.json のいずれからも取得できません。"
-        )
-        LOGGER.error(message)
-        return [], message
+        if from_json:
+            LOGGER.warning(
+                "expected_features.json に %s 列ありましたが、期待 %s と一致しません。",
+                len(from_json),
+                EXPECTED_FEATURES_COUNT,
+            )
     except Exception as exc:
-        message = f"特徴量一覧の取得に失敗しました: {exc}"
-        LOGGER.exception(message)
-        return [], message
+        LOGGER.exception("expected_features.json の読み込みに失敗: %s", exc)
+
+    message = (
+        "期待する26列の特徴量を特定できませんでした。scoring_file_v_2_0_0.py または "
+        "学習データCSVを確認してください。"
+    )
+    LOGGER.error(message)
+    return [], message
 
 
-def infer_features_from_model(model) -> List[str]:
-    if model is None:
-        return []
-    feature_names = getattr(model, "feature_names_in_", None)
-    if feature_names is None:
-        return []
-    return [str(name) for name in feature_names if str(name)]
+def validate_feature_list(features: Sequence[str]) -> bool:
+    return bool(features) and len(features) == EXPECTED_FEATURES_COUNT
+
+
+def persist_expected_features(features: Sequence[str]) -> None:
+    try:
+        EXPECTED_FEATURES_JSON_PATH.write_text(
+            json.dumps(list(features), ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+    except Exception as exc:  # pragma: no cover
+        LOGGER.warning("expected_features.json への保存に失敗: %s", exc)
 
 
 def infer_features_from_scoring_file() -> List[str]:
@@ -221,6 +275,59 @@ def infer_features_from_scoring_file() -> List[str]:
         if isinstance(key, ast.Constant) and isinstance(key.value, str):
             features.append(key.value)
     return features
+
+
+def locate_training_sample_file() -> Optional[Path]:
+    env_path = os.environ.get(TRAINING_SAMPLE_ENV)
+    if env_path:
+        path = Path(env_path).expanduser()
+        if path.exists():
+            return path
+    for candidate in BASE_DIR.rglob(TRAINING_SAMPLE_PATTERN):
+        if candidate.is_file():
+            return candidate
+    default = BASE_DIR / "data" / "テスト用BoxID空欄学習データ3_サイズ情報追加版.csv"
+    if default.exists():
+        return default
+    return None
+
+
+def read_csv_with_encodings(path: Path, nrows: Optional[int] = 200) -> pd.DataFrame:
+    errors = []
+    for encoding in ("utf-8-sig", "cp932"):
+        try:
+            return pd.read_csv(path, encoding=encoding, nrows=nrows)
+        except UnicodeDecodeError as exc:
+            errors.append(exc)
+    raise RuntimeError(f"{path} を読み込めませんでした (encodings tried: utf-8-sig, cp932)")
+
+
+def infer_features_from_training_sample() -> List[str]:
+    training_csv = locate_training_sample_file()
+    if training_csv is None:
+        LOGGER.info("学習データCSVが見つかりませんでした。")
+        return []
+
+    LOGGER.info("学習データから特徴量を推定: %s", training_csv)
+    df = read_csv_with_encodings(training_csv)
+    drop_columns = {
+        "box_id",
+        "slip_number",
+        "product_codes",
+        "sizes_raw",
+        "sum_item_area_cm2",
+        "avg_item_long_cm",
+        "unique_items",
+    }
+    numeric_features: List[str] = []
+    for column in df.columns:
+        if column in drop_columns:
+            continue
+        series = df[column]
+        numeric = pd.to_numeric(series, errors="coerce")
+        if numeric.notna().any():
+            numeric_features.append(column)
+    return numeric_features[:EXPECTED_FEATURES_COUNT]
 
 
 def load_features_from_json() -> List[str]:
@@ -266,6 +373,7 @@ def process_file(
             f"必須列が不足しています: {', '.join(missing)}", status_code=400
         )
 
+    LOGGER.info("Input CSV columns=%s (count=%s)", list(input_df.columns), len(input_df.columns))
     normalized_df = normalize_input_dataframe(input_df)
     features = prepare_model_input(normalized_df, expected_features)
     if features.shape[1] != len(expected_features):
@@ -345,11 +453,15 @@ def prepare_model_input(
         if alias:
             working[column] = df[alias]
             alias_usage[column] = alias
+            continue
+        working[column] = 0
 
-    missing = [col for col in expected_features if col not in working.columns]
+    missing = [
+        col for col in expected_features if col not in df.columns and col not in alias_usage
+    ]
     extra_columns = [col for col in df.columns if col not in expected_features]
     LOGGER.info(
-        "Incoming columns=%s | expected=%s | missing=%s | extra=%s | alias=%s",
+        "Incoming columns=%s | expected=%s | missing(filled)=%s | extra=%s | alias=%s",
         list(df.columns),
         list(expected_features),
         missing,
@@ -357,15 +469,19 @@ def prepare_model_input(
         alias_usage,
     )
     if missing:
-        raise PredictionError(
-            f"モデルに必要な列が不足しています: {', '.join(missing)}", status_code=400
-        )
+        LOGGER.warning("欠損していた列を0で補完しました: %s", missing)
 
     features = working.reindex(columns=expected_features).copy()
     for column in expected_features:
         features[column] = pd.to_numeric(features[column], errors="coerce").fillna(0)
 
-    return features.astype("float64")
+    matrix = features.astype("float64")
+    if matrix.shape[1] != EXPECTED_FEATURES_COUNT:
+        raise PredictionError(
+            f"モデル入力の列数({matrix.shape[1]})が期待値({EXPECTED_FEATURES_COUNT})と異なります。",
+            status_code=500,
+        )
+    return matrix
 
 
 def find_missing_required_columns(df: pd.DataFrame) -> List[str]:
