@@ -13,34 +13,7 @@ import pandas as pd
 from flask import Flask, Response, jsonify, render_template, request
 from werkzeug.utils import secure_filename
 
-REQUIRED_COLUMNS: List[str] = [
-    "slip_number",
-    "shipment_confirmed_date",
-    "subtotal_amount",
-    "total_line_count",
-    "bonsai",
-    "others",
-    "plastic_pots_trays",
-    "single_flower_vase",
-    "decorative_sand",
-    "saucers_mats",
-    "books",
-    "water_basins",
-    "bonsai_seeds",
-    "bonsai_class_items",
-    "bonsai_soil",
-    "bonsai_tools",
-    "bonsai_pots",
-    "bonsai_decor",
-    "lucky_bag",
-    "moss",
-    "moss_bonsai",
-    "chemicals_fertilizers",
-    "wire",
-    "decorative_stones",
-    "specification",
-    "dimensions",
-]
+REQUIRED_COLUMNS: List[str] = ["slip_number"]
 
 INTEGER_COLUMNS = [
     "slip_number",

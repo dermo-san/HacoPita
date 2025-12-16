@@ -53,13 +53,11 @@ gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 8 --timeout 120
 ## CSV要件
 
 - 文字コード：`utf-8-sig` を優先、失敗時は `cp932` で再読込。
-- 必須26列（順序固定）：
-  `slip_number, shipment_confirmed_date, subtotal_amount, total_line_count, bonsai, others, plastic_pots_trays, single_flower_vase, decorative_sand, saucers_mats, books, water_basins, bonsai_seeds, bonsai_class_items, bonsai_soil, bonsai_tools, bonsai_pots, bonsai_decor, lucky_bag, moss, moss_bonsai, chemicals_fertilizers, wire, decorative_stones, specification, dimensions`。
-- 推論モデルには `model.pkl` の `feature_names_in_` もしくは `model/scoring_file_v_2_0_0.py` の `data_sample` から自動抽出した特徴量のみ（21列: `total_line_count` 〜 `decorative_stones`）を渡します。どちらも取得できない場合は `expected_features.json` をフォールバックとして参照し、それも無ければ明示的にエラーを返します。
-- 入力CSVの列名が `total_items`（`total_line_count` の別名）などに変わっていても、既知のエイリアスを自動的に正規列へマッピングします（例：`other`→`others`, `suiban`→`water_basins`, `for_bonsai_classes`→`bonsai_class_items` など）。
-- 型変換：整数列は `int64`（欠損・不正値は0置換）、日時列は `pd.Timestamp("1970-01-01")` で補完、文字列列は空文字で補完。モデルへ渡す21列は `pd.to_numeric` で強制的に数値化し、NaN は 0 で埋めます。
-- 追加列は推論には使用せず、出力CSVでは保持します。
-- 不足列があれば 400 (Bad Request) で欠損列名を返します。
+- 入力CSVで必須なのは `slip_number` のみです（出力で行を特定するため）。学習時に使った特徴量21列は `model.pkl` の `feature_names_in_` または `model/scoring_file_v_2_0_0.py` の `data_sample` から自動抽出し、必要に応じて `expected_features.json` をフォールバックとして参照します。
+- 入力CSVの列名が `total_items`（`total_line_count` の別名）などに変わっていても、既知のエイリアスを自動的に正規列へマッピングします（例：`other`→`others`, `suiban`→`water_basins`, `for_bonsai_classes`→`bonsai_class_items`, `bonsai_decorations`→`bonsai_decor` 等）。
+- モデルへ渡す特徴量は自動抽出された21列（`total_line_count` 〜 `decorative_stones`）のみで、`pd.to_numeric(errors="coerce")` により数値化し、NaN は 0 で埋めます。余計な列（shipment_confirmed_date、specification など）は推論には渡さず、出力CSVには保持します。
+- 型変換：整数列は `int64`（欠損・不正値は0置換）、日時列は `pd.Timestamp("1970-01-01")` で補完、文字列列は空文字で補完。
+- 特徴量自体が不足している場合は 400 (Bad Request) で欠損列名（もしくは alias がない列名）を返します。
 
 ## モデルロード
 
