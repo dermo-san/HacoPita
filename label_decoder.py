@@ -15,6 +15,31 @@ LOGGER = logging.getLogger(__name__)
 LABEL_CLASSES_JSON_PATH = Path(__file__).resolve().parent / "label_classes.json"
 
 
+def _to_int_safe(x) -> Optional[int]:
+    """
+    予測値を安全に整数に変換する
+    
+    Args:
+        x: 予測値（"13", 13, 13.0, "13.0", np.int64(13), np.float64(13.0)等）
+        
+    Returns:
+        整数値、またはNone（NaN/空文字/変換不能の場合）
+    """
+    if pd.isna(x):
+        return None
+    if isinstance(x, (np.integer, int)):
+        return int(x)
+    if isinstance(x, (np.floating, float)):
+        return int(x)
+    s = str(x).strip()
+    if s == "":
+        return None
+    try:
+        return int(float(s))
+    except (ValueError, TypeError):
+        return None
+
+
 def load_label_classes(json_path: Path = None) -> List[str]:
     """
     ラベルクラス（box_idのリスト）をJSONから読み込む
@@ -63,13 +88,18 @@ def decode_predictions(
         output_is_class_index: 予測値が内部クラスIDかどうかを明示的に指定
             - True: 常に内部クラスIDとして扱う（逆変換を実行）
             - False: 常にbox_idとして扱う（そのまま返す）
-            - None: 自動判定（既存のロジック）
+            - None: 自動判定（強化されたロジック）
         
     Returns:
         box_idのリスト（文字列）
         
     Raises:
-        ValueError: 逆変換後のbox_idが学習データに存在しない場合
+        ValueError: 
+            - 予測値にNaNが含まれている場合
+            - 予測値を整数に変換できない場合
+            - 内部クラスIDの範囲外の場合
+            - デコード後のbox_idが学習データに存在しない場合
+            - output_is_class_index=Falseで予測値が学習box_id集合に含まれない場合
     """
     # numpy配列に変換
     if isinstance(predictions, pd.Series):
@@ -82,68 +112,121 @@ def decode_predictions(
     # 1次元に変換
     pred_array = pred_array.reshape(-1)
     
+    # 予測値を安全に整数化（NaN/不正値チェック）
+    pred_ints = []
+    nan_indices = []
+    for i, pred in enumerate(pred_array):
+        pred_int = _to_int_safe(pred)
+        if pred_int is None:
+            nan_indices.append(i)
+        else:
+            pred_ints.append(pred_int)
+    
+    # NaN/不正値が含まれている場合は例外
+    if nan_indices:
+        raise ValueError(
+            f"Predictions contain NaN or invalid values at indices: {nan_indices[:10]}. "
+            "Cannot decode predictions with missing values."
+        )
+    
+    # ログ用にユニークな予測値を取得（常に定義）
+    pred_unique_int = set(pred_ints)
+    pred_unique_str = {str(p) for p in pred_unique_int}
+    
     # output_is_class_indexが明示的に指定されている場合
     if output_is_class_index is True:
         # 常に内部クラスIDとして扱う
+        mode = "class_index (explicit)"
         LOGGER.info(
-            "output_is_class_index=True: Treating predictions as internal class IDs"
+            "Mode: %s | Unique predictions (int): %s (count=%d) | label_classes length: %d",
+            mode,
+            sorted(list(pred_unique_int))[:20],
+            len(pred_unique_int),
+            len(label_classes),
         )
         is_already_box_id = False
     elif output_is_class_index is False:
         # 常にbox_idとして扱う
+        mode = "box_id (explicit)"
         LOGGER.info(
-            "output_is_class_index=False: Treating predictions as box_ids"
+            "Mode: %s | Unique predictions (str): %s (count=%d) | train_box_id_set size: %d",
+            mode,
+            sorted(list(pred_unique_str))[:20],
+            len(pred_unique_str),
+            len(train_box_id_set),
         )
         is_already_box_id = True
     else:
-        # 自動判定（既存のロジック）
-        # ユニークな予測値を取得（文字列に変換）
-        pred_unique = set(str(int(p)) for p in pred_array if not pd.isna(p))
+        # 自動判定（強化されたロジック）
+        mode = "auto"
         
-        # 予測値が既にbox_idかどうかを判定
-        # 判定方法：
-        # 1. train_box_id_setが空でない場合: pred_uniqueがtrain_box_id_setの部分集合なら「既にbox_id」
-        # 2. train_box_id_setが空の場合: 予測値がlabel_classesのインデックス範囲内にあり、
-        #    かつそのインデックスに対応するbox_idが予測値と一致しない場合は内部クラスIDと判定
-        if train_box_id_set:
-            is_already_box_id = pred_unique.issubset(train_box_id_set)
+        # 内部クラスIDの可能性を判定
+        # 条件1: 予測値が0以上でlabel_classesの範囲内
+        is_in_range = (
+            len(pred_unique_int) > 0
+            and min(pred_unique_int) >= 0
+            and max(pred_unique_int) < len(label_classes)
+        )
+        
+        # 条件2: 内部クラスIDっぽい特徴
+        has_class_index_features = False
+        if is_in_range:
+            # 0が含まれる
+            has_zero = 0 in pred_unique_int
+            # 予測ユニーク数が小さい（<=10）
+            is_small_count = len(pred_unique_int) <= 10
+            # 値域が狭い（max-minが小さい、例：<=20）
+            value_range = max(pred_unique_int) - min(pred_unique_int) if pred_unique_int else 0
+            is_narrow_range = value_range <= 20
+            
+            has_class_index_features = has_zero or is_small_count or is_narrow_range
+        
+        # 内部クラスIDと判定
+        if is_in_range and has_class_index_features:
+            is_already_box_id = False
+            mode = "auto->class_index"
         else:
-            # train_box_id_setが空の場合の判定
-            # 予測値がlabel_classesのインデックス範囲内にあり、かつ
-            # そのインデックスに対応するbox_idが予測値と一致しない場合は内部クラスID
-            label_classes_set = set(label_classes)
-            has_index_mismatch = any(
-                int(p) >= 0
-                and int(p) < len(label_classes)
-                and str(label_classes[int(p)]) != str(int(p))
-                for p in pred_array
-                if not pd.isna(p)
-            )
-            # 予測値がlabel_classesに含まれていて、かつインデックス不一致がない場合は既にbox_id
-            is_already_box_id = (
-                pred_unique.issubset(label_classes_set) and not has_index_mismatch
-            )
+            # box_idとして扱う（train_box_id_setで検証）
+            if train_box_id_set:
+                is_already_box_id = pred_unique_str.issubset(train_box_id_set)
+                if is_already_box_id:
+                    mode = "auto->box_id"
+                else:
+                    # train_box_id_setに含まれない場合は内部クラスIDとして試す
+                    is_already_box_id = False
+                    mode = "auto->class_index (fallback)"
+            else:
+                # train_box_id_setが空の場合は内部クラスIDとして扱う
+                is_already_box_id = False
+                mode = "auto->class_index (no train_box_id_set)"
+        
+        LOGGER.info(
+            "Mode: %s | Unique predictions (int): %s (count=%d) | label_classes length: %d | train_box_id_set size: %d",
+            mode,
+            sorted(list(pred_unique_int))[:20],
+            len(pred_unique_int),
+            len(label_classes),
+            len(train_box_id_set),
+        )
     
+    # デコード処理
     if is_already_box_id:
-        LOGGER.info(
-            "Predictions are already box_ids: %s (subset of training box_ids)",
-            pred_unique,
-        )
-        # そのまま文字列に変換して返す
-        decoded = [str(int(p)) if not pd.isna(p) else "0" for p in pred_array]
+        # box_idとして扱う
+        decoded = [str(p) for p in pred_ints]
+        
+        # output_is_class_index=Falseの場合でも、予測値が学習box_id集合に含まれない場合はエラー
+        if output_is_class_index is False or train_box_id_set:
+            decoded_unique = set(decoded)
+            invalid_box_ids = decoded_unique - train_box_id_set
+            if invalid_box_ids:
+                raise ValueError(
+                    f"Predictions contain box_ids not found in training data: {invalid_box_ids}. "
+                    "This may indicate a configuration error (output_is_class_index=False but predictions are class indices)."
+                )
     else:
-        LOGGER.info(
-            "Predictions appear to be internal class IDs. Decoding using label_classes..."
-        )
         # 内部クラスIDとして扱い、逆変換する
         decoded = []
-        for pred in pred_array:
-            if pd.isna(pred):
-                decoded.append("0")
-                continue
-            
-            pred_idx = int(pred)
-            
+        for pred_idx in pred_ints:
             # インデックスの範囲チェック
             if pred_idx < 0 or pred_idx >= len(label_classes):
                 raise ValueError(
@@ -155,13 +238,14 @@ def decode_predictions(
             decoded.append(box_id)
         
         # 逆変換後のbox_idが学習データに存在するかチェック
-        decoded_unique = set(decoded)
-        invalid_box_ids = decoded_unique - train_box_id_set
-        if invalid_box_ids:
-            raise ValueError(
-                f"Decoded box_ids not found in training data: {invalid_box_ids}. "
-                "This indicates a mapping corruption."
-            )
+        if train_box_id_set:
+            decoded_unique = set(decoded)
+            invalid_box_ids = decoded_unique - train_box_id_set
+            if invalid_box_ids:
+                raise ValueError(
+                    f"Decoded box_ids not found in training data: {invalid_box_ids}. "
+                    "This indicates a mapping corruption."
+                )
     
     return decoded
 

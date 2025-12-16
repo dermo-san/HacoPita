@@ -169,6 +169,90 @@ def test_decode_predictions_invalid_box_id():
     # エラーが発生することを確認
     with pytest.raises(ValueError, match="out of range"):
         decode_predictions(predictions, label_classes, train_box_id_set)
+    
+    # output_is_class_index=Trueで範囲外
+    with pytest.raises(ValueError, match="out of range"):
+        decode_predictions(
+            predictions, label_classes, train_box_id_set, output_is_class_index=True
+        )
+
+
+def test_decode_predictions_output_is_class_index_false_with_invalid_box_ids():
+    """テスト: output_is_class_index=Falseで内部IDっぽい入力を与えた場合、エラーになる"""
+    label_classes = ["7", "8", "9", "13", "18", "24"]
+    train_box_id_set = {"7", "8", "9", "13", "18", "24"}
+    
+    # 内部クラスIDっぽい予測値（0, 1, 2）をbox_idとして扱おうとする
+    predictions = np.array([0, 1, 2])
+    
+    # train_box_id_setに"0", "1", "2"が含まれていない場合、エラーになる
+    with pytest.raises(ValueError, match="not found in training data"):
+        decode_predictions(
+            predictions, label_classes, train_box_id_set, output_is_class_index=False
+        )
+
+
+def test_decode_predictions_output_is_class_index_true():
+    """テスト: output_is_class_index=Trueで内部クラスIDを正しくデコード"""
+    label_classes = ["7", "8", "9", "13", "18", "24"]
+    train_box_id_set = {"7", "8", "9", "13", "18", "24"}
+    
+    # 内部クラスIDの予測値
+    predictions = np.array([0, 1, 2])
+    
+    # デコード
+    decoded = decode_predictions(
+        predictions, label_classes, train_box_id_set, output_is_class_index=True
+    )
+    
+    # 検証
+    assert decoded == ["7", "8", "9"]
+
+
+def test_decode_predictions_string_input():
+    """テスト: 文字列形式の予測値でも安全に処理できる"""
+    label_classes = ["7", "8", "9", "13", "18", "24"]
+    train_box_id_set = {"7", "8", "9", "13", "18", "24"}
+    
+    # 文字列形式の予測値（有効な範囲内）
+    predictions_valid = ["0", "1", "2"]
+    decoded = decode_predictions(
+        predictions_valid, label_classes, train_box_id_set, output_is_class_index=True
+    )
+    assert decoded == ["7", "8", "9"]
+    
+    # 浮動小数点数の文字列形式
+    predictions_float_str = ["0.0", "1.0", "2.0"]
+    decoded = decode_predictions(
+        predictions_float_str, label_classes, train_box_id_set, output_is_class_index=True
+    )
+    assert decoded == ["7", "8", "9"]
+    
+    # 範囲外の文字列
+    predictions_out_of_range = ["13.0", "14", "15.0"]
+    with pytest.raises(ValueError, match="out of range"):
+        decode_predictions(
+            predictions_out_of_range, label_classes, train_box_id_set, output_is_class_index=True
+        )
+
+
+def test_decode_predictions_nan_raises_error():
+    """テスト: NaNが含まれている場合は例外になる"""
+    label_classes = ["7", "8", "9"]
+    train_box_id_set = {"7", "8", "9"}
+    
+    # NaNを含む予測値
+    predictions = np.array([0, np.nan, 2])
+    
+    # エラーが発生することを確認
+    with pytest.raises(ValueError, match="NaN or invalid values"):
+        decode_predictions(predictions, label_classes, train_box_id_set)
+    
+    # output_is_class_index=Trueでも同様
+    with pytest.raises(ValueError, match="NaN or invalid values"):
+        decode_predictions(
+            predictions, label_classes, train_box_id_set, output_is_class_index=True
+        )
 
 
 def test_prepare_features_column_order():
