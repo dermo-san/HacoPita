@@ -84,6 +84,21 @@ gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 8 --timeout 120
 
 - `label_classes.json` にラベルクラス（box_idのリスト）が保存されます
 - **重要**: `label_classes.json` は学習成果物として必ず同梱する必要があります。推論側では生成しません。
+
+### label_classes.jsonの生成
+
+学習成果物として`label_classes.json`を生成するには、`generate_label_classes.py`を使用します：
+
+```bash
+# モデルから生成（推奨）
+python generate_label_classes.py --from-model model.pkl
+
+# 学習データから生成
+python generate_label_classes.py --from-training data/テスト用BoxID空欄学習データ3_サイズ情報追加版.csv
+```
+
+生成された`label_classes.json`をリポジトリにコミットしてください。
+
 - 予測値が既にbox_idの場合はそのまま使用されます
 - 逆変換後のbox_idが学習データに存在しない場合はエラーになります
 
