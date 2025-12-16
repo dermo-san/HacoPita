@@ -12,7 +12,13 @@
 ├── python_env.yaml        # MLflow由来の依存定義
 ├── MLmodel                # MLflowメタ情報
 ├── model.pkl              # 推論モデル本体（Renderへ同梱）
-├── model/                 # 元のAzureML成果物をそのまま配置
+├── model/                 # Azure ML から取得した最新成果物（参照用）
+│   ├── model.pkl
+│   ├── conda_env_v_1_0_0.yml
+│   └── scoring_file_v_2_0_0.py
+├── expected_features.json # 特徴量リストのフォールバック（自動取得失敗時に参照）
+├── tests/
+│   └── smoke_test.py      # サンプルCSVを使った簡易スモークテスト
 ├── templates/
 │   └── index.html         # アップロードフォーム
 └── static/
@@ -34,7 +40,7 @@ Render での起動コマンド例：
 gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 8 --timeout 120
 ```
 
-- Python ランタイム：`runtime.txt` および `.python-version` で `3.9.23` を明示しているため、Render 側でも必ず 3.9 系を利用してください（3.12 などでビルドすると AzureML 依存が解決できません）。
+- Python ランタイム：`runtime.txt` および `.python-version` で `3.10.19` を明示しているため、Render 側でも必ず 3.10 系を利用してください（3.12 などでビルドすると AzureML 依存が解決できません）。
 
 ## API/画面仕様
 
@@ -49,7 +55,9 @@ gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 8 --timeout 120
 - 文字コード：`utf-8-sig` を優先、失敗時は `cp932` で再読込。
 - 必須26列（順序固定）：
   `slip_number, shipment_confirmed_date, subtotal_amount, total_line_count, bonsai, others, plastic_pots_trays, single_flower_vase, decorative_sand, saucers_mats, books, water_basins, bonsai_seeds, bonsai_class_items, bonsai_soil, bonsai_tools, bonsai_pots, bonsai_decor, lucky_bag, moss, moss_bonsai, chemicals_fertilizers, wire, decorative_stones, specification, dimensions`。
-- 型変換：整数列は `int64`（欠損・不正値は0置換）、日時列は `pd.Timestamp("1970-01-01")` で補完、文字列列は空文字で補完。
+- 推論モデルには `model.pkl` の `feature_names_in_` もしくは `model/scoring_file_v_2_0_0.py` の `data_sample` から自動抽出した特徴量のみ（21列: `total_line_count` 〜 `decorative_stones`）を渡します。どちらも取得できない場合は `expected_features.json` をフォールバックとして参照し、それも無ければ明示的にエラーを返します。
+- 入力CSVの列名が `total_items`（`total_line_count` の別名）などに変わっていても、既知のエイリアスを自動的に正規列へマッピングします（例：`other`→`others`, `suiban`→`water_basins`, `for_bonsai_classes`→`bonsai_class_items` など）。
+- 型変換：整数列は `int64`（欠損・不正値は0置換）、日時列は `pd.Timestamp("1970-01-01")` で補完、文字列列は空文字で補完。モデルへ渡す21列は `pd.to_numeric` で強制的に数値化し、NaN は 0 で埋めます。
 - 追加列は推論には使用せず、出力CSVでは保持します。
 - 不足列があれば 400 (Bad Request) で欠損列名を返します。
 
@@ -61,8 +69,16 @@ gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 8 --timeout 120
 ## Render用メモ
 
 - Build：`pip install -r requirements.txt`
-- Runtime：Python 3.9.23（Renderのダッシュボードで指定）
+- Runtime：Python 3.10.19（Renderのダッシュボードで指定）
 - PORT は Render により注入されるため `app.py` では `PORT` 環境変数を参照して起動
+
+## テスト
+
+簡易スモークテスト（サンプルCSV＋新モデルで前処理～整形を確認）：
+
+```bash
+python tests/smoke_test.py
+```
 
 ## ライセンス
 
