@@ -42,50 +42,44 @@
             <button type="submit">推論してCSVをダウンロード</button>
         </form>
         <p class="alert info">※ 文字コードは <strong>UTF-8 (BOM付き含む)</strong> または <strong>CP932</strong> に対応しています。</p>
-        <h2>期待する特徴量（32列）</h2>
+        <h2>モデル内部の特徴量（26列）</h2>
         <div class="columns">
             <ul>
                 <li>slip_number</li>
-                <li>total_items</li>
+                <li>shipment_confirmed_date</li>
+                <li>subtotal_amount</li>
+                <li>total_line_count</li>
                 <li>bonsai</li>
-                <li>other</li>
+                <li>others</li>
                 <li>plastic_pots_trays</li>
                 <li>single_flower_vase</li>
                 <li>decorative_sand</li>
                 <li>saucers_mats</li>
                 <li>books</li>
-                <li>suiban</li>
+                <li>water_basins</li>
                 <li>bonsai_seeds</li>
-                <li>for_bonsai_classes</li>
+                <li>bonsai_class_items</li>
                 <li>bonsai_soil</li>
                 <li>bonsai_tools</li>
                 <li>bonsai_pots</li>
-                <li>bonsai_decorations</li>
+                <li>bonsai_decor</li>
                 <li>lucky_bag</li>
                 <li>moss</li>
                 <li>moss_bonsai</li>
-                <li>chemicals_fertilizer</li>
+                <li>chemicals_fertilizers</li>
                 <li>wire</li>
                 <li>decorative_stones</li>
-                <li>accessories</li>
+                <li>specification</li>
             </ul>
             <ul>
-                <li>product_codes (string)</li>
-                <li>sizes_raw (string)</li>
-                <li>max_item_long_cm</li>
-                <li>max_item_mid_cm</li>
-                <li>max_item_short_cm</li>
-                <li>sum_item_area_cm2</li>
-                <li>sum_item_volume_cm3</li>
-                <li>avg_item_long_cm</li>
-                <li>unique_items</li>
+                <li>dimensions (string)</li>
             </ul>
         </div>
-        <p>`product_codes` と `sizes_raw` は文字列列として扱い、それ以外は数値列です。CSVのヘッダと列順が学習データと一致していることが前提です（欠損列はエラーで停止します）。</p>
+        <p>アップロードCSVが最新スキーマ（例：total_items, suiban, sizes_raw など）でも、アプリ側で alias とデフォルト補完を行い、この 26 列に整形してからモデルへ渡します。欠損列は 0 や空文字で補われるため、旧スキーマの列が無くても推論できます。</p>
         <h2>出力仕様</h2>
         <ul>
             <li>アップロードしたCSVの列を保持し、末尾に <code>predicted_box_id</code> を追加してダウンロード</li>
-            <li>推論に必要な列が不足している場合は 400 でエラー内容を表示</li>
+            <li>必須列（slip_number）が欠落している場合のみ 400 でエラー内容を表示</li>
             <li>サンプルCSV：<a href="{{ url_for('static', filename='sample_input.csv') }}" download>sample_input.csv</a></li>
         </ul>
         <h2>APIの使い方</h2>

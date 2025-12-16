@@ -52,15 +52,16 @@ gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 8 --timeout 120
   - `?format=json` 付きでJSON（`slip_number`, `predicted_box_id` の配列）
   - それ以外はCSVを添付ダウンロード
 
-- 特徴量32列の自動取得順
-  1. `model/scoring_file_v_2_0_0.py` の `data_sample` のキーを解析
-  2. 1で確定できなければ `data/テスト用BoxID空欄学習データ3_サイズ情報追加版.csv`（または `TRAINING_FEATURE_SAMPLE` 環境変数で指定したCSV）のヘッダーから `box_id` や ID列を除いて推定
-  3. それでも取得できない場合だけ `expected_features.json` を参照
+- 特徴量26列の自動取得順
+  1. ルート直下の `MLmodel` signature から列定義を取得（常にモデルと同期）
+  2. 1で確定できなければ `model/scoring_file_v_2_0_0.py` の `data_sample` を解析
+  3. それでも確定できなければ `data/テスト用BoxID空欄学習データ3_サイズ情報追加版.csv`（または `TRAINING_FEATURE_SAMPLE` で指定したCSV）のヘッダーから `box_id` を除いて推定
+  4. 最後の手段として `expected_features.json`
 - 文字コード：`utf-8-sig` を優先、失敗時は `cp932` で再読込。
-- 入力CSVで必須なのは `slip_number` のみ（出力時に行を紐づけるため）。その他の列は CSVヘッダと完全一致している必要があります。旧列名（`total_line_count` など）を使う場合は最小限の alias で正規列へ吸収しますが、基本は学習CSVの列名で揃えてください。
-- モデルへ渡す32列（順序固定）：
-  `slip_number, total_items, bonsai, other, plastic_pots_trays, single_flower_vase, decorative_sand, saucers_mats, books, suiban, bonsai_seeds, for_bonsai_classes, bonsai_soil, bonsai_tools, bonsai_pots, bonsai_decorations, lucky_bag, moss, moss_bonsai, chemicals_fertilizer, wire, decorative_stones, accessories, product_codes, sizes_raw, max_item_long_cm, max_item_mid_cm, max_item_short_cm, sum_item_area_cm2, sum_item_volume_cm3, avg_item_long_cm, unique_items`
-- `product_codes` と `sizes_raw` は文字列列として扱い、その他の列は整数または浮動小数で `pd.to_numeric(errors="coerce")` → NaN を 0 で補完します。
+- 入力CSVで必須なのは `slip_number` のみ（出力時に行を紐づけるため）。その他の列は可能な範囲で alias / デフォルト値補完を行いますが、学習CSVのヘッダに寄せるほど推論の再現性が上がります。
+- モデルへ渡す26列（MLmodel signature 準拠）：
+  `slip_number, shipment_confirmed_date, subtotal_amount, total_line_count, bonsai, others, plastic_pots_trays, single_flower_vase, decorative_sand, saucers_mats, books, water_basins, bonsai_seeds, bonsai_class_items, bonsai_soil, bonsai_tools, bonsai_pots, bonsai_decor, lucky_bag, moss, moss_bonsai, chemicals_fertilizers, wire, decorative_stones, specification, dimensions`
+- `dimensions` は文字列列、`shipment_confirmed_date` は日時列として正規化し、その他の列は整数列として `pd.to_numeric(errors="coerce")` → NaN を 0 埋めします。CSVに存在しない列はログを出したうえでデフォルト値で補完します。
 - `box_id`（ターゲット列）は入力CSVに含まれていても無視され、出力CSVにはそのまま残ります。
 
 ## モデルロード

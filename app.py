@@ -6,47 +6,45 @@ import os
 import pickle
 import re
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Set, Tuple
 
 import numpy as np
 import pandas as pd
+try:
+    import yaml
+except ImportError:  # pragma: no cover - optional dependency during local smoke tests
+    yaml = None
 from flask import Flask, Response, jsonify, render_template, request
 from werkzeug.utils import secure_filename
 
 BASE_DIR = Path(__file__).resolve().parent
 FEATURE_COLUMNS: List[str] = [
     "slip_number",
-    "total_items",
+    "shipment_confirmed_date",
+    "subtotal_amount",
+    "total_line_count",
     "bonsai",
-    "other",
+    "others",
     "plastic_pots_trays",
     "single_flower_vase",
     "decorative_sand",
     "saucers_mats",
     "books",
-    "suiban",
+    "water_basins",
     "bonsai_seeds",
-    "for_bonsai_classes",
+    "bonsai_class_items",
     "bonsai_soil",
     "bonsai_tools",
     "bonsai_pots",
-    "bonsai_decorations",
+    "bonsai_decor",
     "lucky_bag",
     "moss",
     "moss_bonsai",
-    "chemicals_fertilizer",
+    "chemicals_fertilizers",
     "wire",
     "decorative_stones",
-    "accessories",
-    "product_codes",
-    "sizes_raw",
-    "max_item_long_cm",
-    "max_item_mid_cm",
-    "max_item_short_cm",
-    "sum_item_area_cm2",
-    "sum_item_volume_cm3",
-    "avg_item_long_cm",
-    "unique_items",
+    "specification",
+    "dimensions",
 ]
 TARGET_COLUMN = "box_id"
 EXPECTED_FEATURES_COUNT = len(FEATURE_COLUMNS)
@@ -55,33 +53,30 @@ TRAINING_SAMPLE_PATTERN = "*学習データ*.csv"
 
 REQUIRED_COLUMNS: List[str] = ["slip_number"]
 
-STRING_COLUMNS = {"product_codes", "sizes_raw"}
-FLOAT_COLUMNS = {
-    "max_item_long_cm",
-    "max_item_mid_cm",
-    "max_item_short_cm",
-    "sum_item_area_cm2",
-    "sum_item_volume_cm3",
-    "avg_item_long_cm",
-}
+STRING_COLUMNS = {"dimensions"}
+FLOAT_COLUMNS: Set[str] = set()
+DATETIME_COLUMNS = {"shipment_confirmed_date"}
 INTEGER_COLUMNS = [
     col
     for col in FEATURE_COLUMNS
-    if col not in STRING_COLUMNS and col not in FLOAT_COLUMNS
+    if col not in STRING_COLUMNS and col not in FLOAT_COLUMNS and col not in DATETIME_COLUMNS
 ]
 MODEL_PATH = Path(__file__).resolve().parent / "model.pkl"
 SCORING_FILE_PATH = Path(__file__).resolve().parent / "model" / "scoring_file_v_2_0_0.py"
 EXPECTED_FEATURES_JSON_PATH = Path(__file__).resolve().parent / "expected_features.json"
+MLMODEL_PATH = Path(__file__).resolve().parent / "MLmodel"
 LOGGER = logging.getLogger(__name__)
 FEATURE_ALIASES: Dict[str, List[str]] = {
-    "total_items": ["total_line_count"],
-    "other": ["others"],
-    "suiban": ["water_basins"],
-    "for_bonsai_classes": ["bonsai_class_items"],
-    "bonsai_decorations": ["bonsai_decor"],
-    "chemicals_fertilizer": ["chemicals_fertilizers"],
-    "sizes_raw": ["dimensions"],
+    "total_line_count": ["total_items"],
+    "others": ["other"],
+    "water_basins": ["suiban"],
+    "bonsai_class_items": ["for_bonsai_classes"],
+    "bonsai_decor": ["bonsai_decorations"],
+    "chemicals_fertilizers": ["chemicals_fertilizer"],
+    "specification": ["accessories"],
+    "dimensions": ["sizes_raw"],
 }
+DEFAULT_DATETIME = pd.Timestamp("1970-01-01")
 
 
 def create_app() -> Flask:
@@ -194,6 +189,21 @@ def load_model() -> Tuple[object, str]:
 
 def get_expected_features() -> Tuple[List[str], str]:
     try:
+        from_mlmodel = infer_features_from_mlmodel_signature()
+        if validate_feature_list(from_mlmodel):
+            persist_expected_features(from_mlmodel)
+            log_detected_features(from_mlmodel, MLMODEL_PATH)
+            return from_mlmodel, ""
+        if from_mlmodel:
+            LOGGER.warning(
+                "MLmodel から取得した列数が %s でした（期待 %s）。",
+                len(from_mlmodel),
+                EXPECTED_FEATURES_COUNT,
+            )
+    except Exception as exc:
+        LOGGER.exception("MLmodel の signature 解析に失敗: %s", exc)
+
+    try:
         from_scoring = infer_features_from_scoring_file()
         if validate_feature_list(from_scoring):
             persist_expected_features(from_scoring)
@@ -238,8 +248,8 @@ def get_expected_features() -> Tuple[List[str], str]:
         LOGGER.exception("expected_features.json の読み込みに失敗: %s", exc)
 
     message = (
-        "期待する32列の特徴量を特定できませんでした。scoring_file_v_2_0_0.py または "
-        "学習データCSVを確認してください。"
+        f"期待する{EXPECTED_FEATURES_COUNT}列の特徴量を特定できませんでした。"
+        "MLmodel / scoring_file_v_2_0_0.py / 学習データCSVを確認してください。"
     )
     LOGGER.error(message)
     persist_expected_features(FEATURE_COLUMNS)
@@ -276,6 +286,26 @@ def infer_features_from_scoring_file() -> List[str]:
     for key in dict_node.body.keys:
         if isinstance(key, ast.Constant) and isinstance(key.value, str):
             features.append(key.value)
+    return features
+
+
+def infer_features_from_mlmodel_signature() -> List[str]:
+    if yaml is None or not MLMODEL_PATH.exists():
+        return []
+    data = yaml.safe_load(MLMODEL_PATH.read_text(encoding="utf-8"))
+    signature = data.get("signature", {})
+    inputs_raw = signature.get("inputs")
+    if not inputs_raw:
+        return []
+    if isinstance(inputs_raw, str):
+        inputs = json.loads(inputs_raw)
+    else:
+        inputs = inputs_raw
+    features: List[str] = []
+    for item in inputs:
+        name = item.get("name")
+        if name:
+            features.append(str(name))
     return features
 
 
@@ -359,7 +389,9 @@ def process_file(
             f"必須列が不足しています: {', '.join(missing)}", status_code=400
         )
 
-    LOGGER.info("Input CSV columns=%s (count=%s)", list(input_df.columns), len(input_df.columns))
+    LOGGER.info(
+        "Input CSV columns=%s (count=%s)", list(input_df.columns), len(input_df.columns)
+    )
     features = prepare_model_input(input_df, expected_features)
     if features.shape[1] != len(expected_features):
         raise PredictionError(
@@ -425,6 +457,13 @@ def normalize_input_dataframe(df: pd.DataFrame) -> pd.DataFrame:
             continue
         normalized[column] = normalized[column].fillna("").astype(str)
 
+    for column in DATETIME_COLUMNS:
+        if column not in normalized.columns:
+            continue
+        normalized[column] = pd.to_datetime(
+            normalized[column], errors="coerce"
+        ).fillna(DEFAULT_DATETIME)
+
     return normalized
 
 
@@ -444,6 +483,7 @@ def prepare_model_input(
             alias_usage[column] = alias
             continue
         missing.append(column)
+        working[column] = create_default_column(len(df), column)
 
     extra_columns = [
         col for col in df.columns if col not in expected_features and col != TARGET_COLUMN
@@ -457,8 +497,9 @@ def prepare_model_input(
         alias_usage,
     )
     if missing:
-        raise PredictionError(
-            f"モデルに必要な列が不足しています: {', '.join(missing)}", status_code=400
+        LOGGER.warning(
+            "次の列が入力に存在しなかったためデフォルト値で補完しました: %s",
+            missing,
         )
 
     normalized = normalize_input_dataframe(working)
@@ -470,6 +511,16 @@ def prepare_model_input(
             status_code=500,
         )
     return features
+
+
+def create_default_column(length: int, column: str) -> pd.Series:
+    if column in DATETIME_COLUMNS:
+        return pd.Series([DEFAULT_DATETIME] * length)
+    if column in STRING_COLUMNS:
+        return pd.Series([""] * length, dtype="object")
+    if column in FLOAT_COLUMNS:
+        return pd.Series([0.0] * length, dtype="float64")
+    return pd.Series([0] * length, dtype="int64")
 
 
 def find_missing_required_columns(df: pd.DataFrame) -> List[str]:
