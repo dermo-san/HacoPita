@@ -7,11 +7,16 @@
 ```
 .
 ├── app.py                 # Flaskエントリポイント（PORT環境変数で待ち受け）
+├── schema.py              # 特徴量スキーマ定義（FEATURE_COLUMNS, DROP_COLUMNS等）
+├── preprocessing.py       # 前処理関数（prepare_features）
+├── label_decoder.py       # ラベルデコード関数（内部クラスID→box_id逆変換）
+├── evaluate_predictions.py # 評価スクリプト（Accuracy算出）
 ├── requirements.txt       # 既存のAzureML依存を含む推論環境
 ├── conda.yaml             # MLflow由来の依存定義
 ├── python_env.yaml        # MLflow由来の依存定義
 ├── MLmodel                # MLflowメタ情報
 ├── model.pkl              # 推論モデル本体（Renderへ同梱）
+├── label_classes.json     # ラベルクラス（box_idのリスト、自動生成）
 ├── model/                 # Azure ML から取得した最新成果物（参照用）
 │   ├── model.pkl
 │   ├── conda_env_v_1_0_0.yml
@@ -20,7 +25,8 @@
 ├── data/
 │   └── テスト用BoxID空欄学習データ3_サイズ情報追加版.csv # 特徴量推定用の学習データ抜粋
 ├── tests/
-│   └── smoke_test.py      # サンプルCSVを使った簡易スモークテスト
+│   ├── smoke_test.py      # サンプルCSVを使った簡易スモークテスト
+│   └── test_inference.py  # 推論プログラムのテスト
 ├── templates/
 │   └── index.html         # アップロードフォーム
 └── static/
@@ -52,17 +58,45 @@ gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 8 --timeout 120
   - `?format=json` 付きでJSON（`slip_number`, `predicted_box_id` の配列）
   - それ以外はCSVを添付ダウンロード
 
-- 特徴量26列の自動取得順
-  1. ルート直下の `MLmodel` signature から列定義を取得（常にモデルと同期）
-  2. 1で確定できなければ `model/scoring_file_v_2_0_0.py` の `data_sample` を解析
-  3. それでも確定できなければ `data/テスト用BoxID空欄学習データ3_サイズ情報追加版.csv`（または `TRAINING_FEATURE_SAMPLE` で指定したCSV）のヘッダーから `box_id` を除いて推定
-  4. 最後の手段として `expected_features.json`
-- 文字コード：`utf-8-sig` を優先、失敗時は `cp932` で再読込。
-- 入力CSVで必須なのは `slip_number` のみ（出力時に行を紐づけるため）。その他の列は可能な範囲で alias / デフォルト値補完を行いますが、学習CSVのヘッダに寄せるほど推論の再現性が上がります。
-- モデルへ渡す26列（MLmodel signature 準拠）：
-  `slip_number, shipment_confirmed_date, subtotal_amount, total_line_count, bonsai, others, plastic_pots_trays, single_flower_vase, decorative_sand, saucers_mats, books, water_basins, bonsai_seeds, bonsai_class_items, bonsai_soil, bonsai_tools, bonsai_pots, bonsai_decor, lucky_bag, moss, moss_bonsai, chemicals_fertilizers, wire, decorative_stones, specification, dimensions`
-- `dimensions` は文字列列、`shipment_confirmed_date` は日時列として正規化し、その他の列は整数列として `pd.to_numeric(errors="coerce")` → NaN を 0 埋めします。CSVに存在しない列はログを出したうえでデフォルト値で補完します。
-- `box_id`（ターゲット列）は入力CSVに含まれていても無視され、出力CSVにはそのまま残ります。
+## 特徴量スキーマ
+
+**重要**: 特徴量スキーマは `schema.py` で固定されています。学習時に使用した特徴量と完全に一致させています。
+
+### 必須特徴量（23列、この順序で固定）
+
+`total_items`, `bonsai`, `other`, `plastic_pots_trays`, `single_flower_vase`, `decorative_sand`, `saucers_mats`, `books`, `suiban`, `bonsai_seeds`, `for_bonsai_classes`, `bonsai_soil`, `bonsai_tools`, `bonsai_pots`, `bonsai_decorations`, `lucky_bag`, `moss`, `moss_bonsai`, `chemicals_fertilizer`, `wire`, `decorative_stones`, `max_item_long_cm`, `sum_item_volume_cm3`
+
+### 除外列（入力CSVにあっても無視される）
+
+`slip_number`（突合キーとして保持）、`accessories`, `product_codes`, `sizes_raw`, `max_item_mid_cm`, `max_item_short_cm`, `sum_item_area_cm2`, `avg_item_long_cm`, `unique_items`
+
+### 入力CSVの要件
+
+- **必須列**: `slip_number`（突合キーとして必要）
+- **必須特徴量**: 上記23列がすべて存在する必要があります
+- **余分な列**: 除外列やその他の列が含まれていても問題ありません（無視されます）
+- **型変換**: 数値列は自動的に数値型に変換され、NaNは0で埋められます
+- **文字コード**: `utf-8-sig` を優先、失敗時は `cp932` で再読込
+
+## ラベルエンコードの逆変換
+
+モデルが内部クラスID（0, 1, 2, ...）を返す場合、自動的にbox_idに逆変換されます。
+
+- `label_classes.json` にラベルクラス（box_idのリスト）が保存されます
+- モデル読み込み時に自動生成されます（モデルの `classes_` 属性から取得、または学習データから生成）
+- 予測値が既にbox_idの場合はそのまま使用されます
+- 逆変換後のbox_idが学習データに存在しない場合はエラーになります
+
+## 評価
+
+予測結果を評価するには `evaluate_predictions.py` を使用します：
+
+```bash
+python evaluate_predictions.py predictions.csv [--ground-truth ground_truth.csv]
+```
+
+- `slip_number` で `box_id` と `predicted_box_id` を突合し、Accuracyを算出します
+- `--ground-truth` を指定しない場合、`predictions.csv` から `box_id` を取得します
 
 ## モデルロード
 
@@ -82,6 +116,20 @@ gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 8 --timeout 120
 ```bash
 python tests/smoke_test.py
 ```
+
+推論プログラムのテスト（pytest）：
+
+```bash
+pytest tests/test_inference.py -v
+```
+
+テスト内容：
+- 入力CSVに除外列が含まれても推論できる
+- 必須列が欠けたらエラーになる
+- 内部クラスIDをbox_idに逆変換できる
+- 予測値が既にbox_idの場合はそのまま使用される
+- FEATURE_COLUMNSの順序で抽出される
+- 型変換が正しく行われる
 
 ## ライセンス
 
