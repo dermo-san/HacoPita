@@ -14,73 +14,73 @@ from flask import Flask, Response, jsonify, render_template, request
 from werkzeug.utils import secure_filename
 
 BASE_DIR = Path(__file__).resolve().parent
-EXPECTED_FEATURES_COUNT = 26
-TRAINING_SAMPLE_ENV = "TRAINING_FEATURE_SAMPLE"
-TRAINING_SAMPLE_PATTERN = "*学習データ*.csv"
-
-REQUIRED_COLUMNS: List[str] = ["slip_number"]
-
-INTEGER_COLUMNS = [
+FEATURE_COLUMNS: List[str] = [
     "slip_number",
-    "subtotal_amount",
-    "total_line_count",
+    "total_items",
     "bonsai",
-    "others",
+    "other",
     "plastic_pots_trays",
     "single_flower_vase",
     "decorative_sand",
     "saucers_mats",
     "books",
-    "water_basins",
+    "suiban",
     "bonsai_seeds",
-    "bonsai_class_items",
+    "for_bonsai_classes",
     "bonsai_soil",
     "bonsai_tools",
     "bonsai_pots",
-    "bonsai_decor",
+    "bonsai_decorations",
     "lucky_bag",
     "moss",
     "moss_bonsai",
-    "chemicals_fertilizers",
+    "chemicals_fertilizer",
     "wire",
     "decorative_stones",
-    "specification",
+    "accessories",
+    "product_codes",
+    "sizes_raw",
+    "max_item_long_cm",
+    "max_item_mid_cm",
+    "max_item_short_cm",
+    "sum_item_area_cm2",
+    "sum_item_volume_cm3",
+    "avg_item_long_cm",
+    "unique_items",
 ]
+TARGET_COLUMN = "box_id"
+EXPECTED_FEATURES_COUNT = len(FEATURE_COLUMNS)
+TRAINING_SAMPLE_ENV = "TRAINING_FEATURE_SAMPLE"
+TRAINING_SAMPLE_PATTERN = "*学習データ*.csv"
 
-DATETIME_COLUMNS = ["shipment_confirmed_date"]
-STRING_COLUMNS = ["dimensions"]
-FALLBACK_DATE = pd.Timestamp("1970-01-01")
+REQUIRED_COLUMNS: List[str] = ["slip_number"]
+
+STRING_COLUMNS = {"product_codes", "sizes_raw"}
+FLOAT_COLUMNS = {
+    "max_item_long_cm",
+    "max_item_mid_cm",
+    "max_item_short_cm",
+    "sum_item_area_cm2",
+    "sum_item_volume_cm3",
+    "avg_item_long_cm",
+}
+INTEGER_COLUMNS = [
+    col
+    for col in FEATURE_COLUMNS
+    if col not in STRING_COLUMNS and col not in FLOAT_COLUMNS
+]
 MODEL_PATH = Path(__file__).resolve().parent / "model.pkl"
 SCORING_FILE_PATH = Path(__file__).resolve().parent / "model" / "scoring_file_v_2_0_0.py"
 EXPECTED_FEATURES_JSON_PATH = Path(__file__).resolve().parent / "expected_features.json"
 LOGGER = logging.getLogger(__name__)
 FEATURE_ALIASES: Dict[str, List[str]] = {
     "total_items": ["total_line_count"],
-    "bonsai": [],
     "other": ["others"],
-    "plastic_pots_trays": [],
-    "single_flower_vase": [],
-    "decorative_sand": [],
-    "saucers_mats": [],
-    "books": [],
     "suiban": ["water_basins"],
-    "bonsai_seeds": [],
     "for_bonsai_classes": ["bonsai_class_items"],
-    "bonsai_soil": [],
-    "bonsai_tools": [],
-    "bonsai_pots": [],
     "bonsai_decorations": ["bonsai_decor"],
-    "lucky_bag": [],
-    "moss": [],
-    "moss_bonsai": [],
     "chemicals_fertilizer": ["chemicals_fertilizers"],
-    "wire": [],
-    "decorative_stones": [],
-    "accessories": [],
-    "max_item_long_cm": [],
-    "max_item_mid_cm": [],
-    "max_item_short_cm": [],
-    "sum_item_volume_cm3": [],
+    "sizes_raw": ["dimensions"],
 }
 
 
@@ -238,11 +238,13 @@ def get_expected_features() -> Tuple[List[str], str]:
         LOGGER.exception("expected_features.json の読み込みに失敗: %s", exc)
 
     message = (
-        "期待する26列の特徴量を特定できませんでした。scoring_file_v_2_0_0.py または "
+        "期待する32列の特徴量を特定できませんでした。scoring_file_v_2_0_0.py または "
         "学習データCSVを確認してください。"
     )
     LOGGER.error(message)
-    return [], message
+    persist_expected_features(FEATURE_COLUMNS)
+    log_detected_features(FEATURE_COLUMNS, "built-in FEATURE_COLUMNS")
+    return FEATURE_COLUMNS.copy(), ""
 
 
 def validate_feature_list(features: Sequence[str]) -> bool:
@@ -310,24 +312,8 @@ def infer_features_from_training_sample() -> List[str]:
 
     LOGGER.info("学習データから特徴量を推定: %s", training_csv)
     df = read_csv_with_encodings(training_csv)
-    drop_columns = {
-        "box_id",
-        "slip_number",
-        "product_codes",
-        "sizes_raw",
-        "sum_item_area_cm2",
-        "avg_item_long_cm",
-        "unique_items",
-    }
-    numeric_features: List[str] = []
-    for column in df.columns:
-        if column in drop_columns:
-            continue
-        series = df[column]
-        numeric = pd.to_numeric(series, errors="coerce")
-        if numeric.notna().any():
-            numeric_features.append(column)
-    return numeric_features[:EXPECTED_FEATURES_COUNT]
+    features = [col for col in df.columns if col != TARGET_COLUMN]
+    return features
 
 
 def load_features_from_json() -> List[str]:
@@ -374,8 +360,7 @@ def process_file(
         )
 
     LOGGER.info("Input CSV columns=%s (count=%s)", list(input_df.columns), len(input_df.columns))
-    normalized_df = normalize_input_dataframe(input_df)
-    features = prepare_model_input(normalized_df, expected_features)
+    features = prepare_model_input(input_df, expected_features)
     if features.shape[1] != len(expected_features):
         raise PredictionError(
             "モデル入力の列数が期待値と一致しません。", status_code=500
@@ -426,11 +411,13 @@ def normalize_input_dataframe(df: pd.DataFrame) -> pd.DataFrame:
             pd.to_numeric(normalized[column], errors="coerce").fillna(0).astype("int64")
         )
 
-    for column in DATETIME_COLUMNS:
+    for column in FLOAT_COLUMNS:
         if column not in normalized.columns:
             continue
-        normalized[column] = pd.to_datetime(normalized[column], errors="coerce").fillna(
-            FALLBACK_DATE
+        normalized[column] = (
+            pd.to_numeric(normalized[column], errors="coerce")
+            .fillna(0.0)
+            .astype("float64")
         )
 
     for column in STRING_COLUMNS:
@@ -446,6 +433,8 @@ def prepare_model_input(
 ) -> pd.DataFrame:
     working = df.copy()
     alias_usage: Dict[str, str] = {}
+    missing: List[str] = []
+
     for column in expected_features:
         if column in working.columns:
             continue
@@ -454,14 +443,13 @@ def prepare_model_input(
             working[column] = df[alias]
             alias_usage[column] = alias
             continue
-        working[column] = 0
+        missing.append(column)
 
-    missing = [
-        col for col in expected_features if col not in df.columns and col not in alias_usage
+    extra_columns = [
+        col for col in df.columns if col not in expected_features and col != TARGET_COLUMN
     ]
-    extra_columns = [col for col in df.columns if col not in expected_features]
     LOGGER.info(
-        "Incoming columns=%s | expected=%s | missing(filled)=%s | extra=%s | alias=%s",
+        "Incoming columns=%s | expected=%s | missing=%s | extra=%s | alias=%s",
         list(df.columns),
         list(expected_features),
         missing,
@@ -469,19 +457,19 @@ def prepare_model_input(
         alias_usage,
     )
     if missing:
-        LOGGER.warning("欠損していた列を0で補完しました: %s", missing)
-
-    features = working.reindex(columns=expected_features).copy()
-    for column in expected_features:
-        features[column] = pd.to_numeric(features[column], errors="coerce").fillna(0)
-
-    matrix = features.astype("float64")
-    if matrix.shape[1] != EXPECTED_FEATURES_COUNT:
         raise PredictionError(
-            f"モデル入力の列数({matrix.shape[1]})が期待値({EXPECTED_FEATURES_COUNT})と異なります。",
+            f"モデルに必要な列が不足しています: {', '.join(missing)}", status_code=400
+        )
+
+    normalized = normalize_input_dataframe(working)
+    features = normalized.reindex(columns=expected_features).copy()
+    LOGGER.info("Prepared model input shape=%s columns=%s", features.shape, list(features.columns))
+    if features.shape[1] != EXPECTED_FEATURES_COUNT:
+        raise PredictionError(
+            f"モデル入力の列数({features.shape[1]})が期待値({EXPECTED_FEATURES_COUNT})と異なります。",
             status_code=500,
         )
-    return matrix
+    return features
 
 
 def find_missing_required_columns(df: pd.DataFrame) -> List[str]:

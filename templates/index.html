@@ -42,9 +42,10 @@
             <button type="submit">推論してCSVをダウンロード</button>
         </form>
         <p class="alert info">※ 文字コードは <strong>UTF-8 (BOM付き含む)</strong> または <strong>CP932</strong> に対応しています。</p>
-        <h2>期待する特徴量（26列）</h2>
+        <h2>期待する特徴量（32列）</h2>
         <div class="columns">
             <ul>
+                <li>slip_number</li>
                 <li>total_items</li>
                 <li>bonsai</li>
                 <li>other</li>
@@ -60,8 +61,6 @@
                 <li>bonsai_tools</li>
                 <li>bonsai_pots</li>
                 <li>bonsai_decorations</li>
-            </ul>
-            <ul>
                 <li>lucky_bag</li>
                 <li>moss</li>
                 <li>moss_bonsai</li>
@@ -69,14 +68,20 @@
                 <li>wire</li>
                 <li>decorative_stones</li>
                 <li>accessories</li>
+            </ul>
+            <ul>
+                <li>product_codes (string)</li>
+                <li>sizes_raw (string)</li>
                 <li>max_item_long_cm</li>
                 <li>max_item_mid_cm</li>
                 <li>max_item_short_cm</li>
+                <li>sum_item_area_cm2</li>
                 <li>sum_item_volume_cm3</li>
-                <li>※ `product_codes`, `sizes_raw` などの文字列列は推論には使用しません。</li>
+                <li>avg_item_long_cm</li>
+                <li>unique_items</li>
             </ul>
         </div>
-        <p>slip_number は出力紐付けのため必須ですが、モデルへ渡す特徴量には含めません。欠けている列があっても 0 で補完されますが、上記26列が揃っていると精度が安定します。</p>
+        <p>`product_codes` と `sizes_raw` は文字列列として扱い、それ以外は数値列です。CSVのヘッダと列順が学習データと一致していることが前提です（欠損列はエラーで停止します）。</p>
         <h2>出力仕様</h2>
         <ul>
             <li>アップロードしたCSVの列を保持し、末尾に <code>predicted_box_id</code> を追加してダウンロード</li>

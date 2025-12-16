@@ -8,7 +8,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from app import get_expected_features, normalize_input_dataframe, prepare_model_input  # noqa: E402
+from app import FEATURE_COLUMNS, get_expected_features, prepare_model_input  # noqa: E402
 
 ALIAS_RENAMES = {
     "total_items": "total_line_count",
@@ -17,6 +17,7 @@ ALIAS_RENAMES = {
     "for_bonsai_classes": "bonsai_class_items",
     "bonsai_decorations": "bonsai_decor",
     "chemicals_fertilizer": "chemicals_fertilizers",
+    "sizes_raw": "dimensions",
 }
 
 
@@ -33,9 +34,10 @@ def main() -> None:
     }
 
     for label, current_df in variants.items():
-        normalized = normalize_input_dataframe(current_df)
-        X = prepare_model_input(normalized, features)
-        assert X.shape[1] == len(features), f"{label}: 列数が期待値と一致しません"
+        X = prepare_model_input(current_df, features)
+        assert X.shape[1] == len(features) == len(FEATURE_COLUMNS), (
+            f"{label}: 列数が期待値と一致しません"
+        )
         print(f"{label} variant -> rows={len(current_df)} features={X.shape[1]}")
 
     print("Smoke test passed:")

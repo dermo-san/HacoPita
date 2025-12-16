@@ -1,4 +1,5 @@
 [
+  "slip_number",
   "total_items",
   "bonsai",
   "other",
@@ -21,8 +22,13 @@
   "wire",
   "decorative_stones",
   "accessories",
+  "product_codes",
+  "sizes_raw",
   "max_item_long_cm",
   "max_item_mid_cm",
   "max_item_short_cm",
-  "sum_item_volume_cm3"
+  "sum_item_area_cm2",
+  "sum_item_volume_cm3",
+  "avg_item_long_cm",
+  "unique_items"
 ]
