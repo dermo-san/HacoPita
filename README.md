@@ -11,6 +11,7 @@ Azure ML オンラインエンドポイントを第一候補として呼び出�
 ├── schema.py              # 24特徴量やエイリアスの単一ソース
 ├── preprocessing.py       # build_features() で前処理を一元化
 ├── predictor.py           # Azure ML オンラインエンドポイント / ローカル推論のラッパー
+├── train.py               # 24特徴量のみで学習し model_features.json を出力する学習スクリプト
 ├── model_features.json    # 学習時に保存する 24特徴量リスト (順序固定)
 ├── requirements.txt       # 既存のAzureML依存を含む推論環境
 ├── conda.yaml / python_env.yaml / MLmodel  # MLflow由来の依存メタ情報
@@ -96,7 +97,7 @@ gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 8 --timeout 120
 ## Azure ML モデル入れ替え手順（21 → 24列）
 
 1. **学習スクリプトの更新**
-   - `schema.py` をインポートし、`X = df[FEATURE_COLUMNS_24]` で入力列を固定します。
+   - `train.py` をそのまま使うか、同様のロジックを取り込んでください。内部では `X = df.reindex(columns=FEATURE_COLUMNS_24)` で入力列順を固定し、 `assert X.shape[1] == 24` / `Missing required columns` で 24 列以外なら学習を失敗させます。
    - `build_features()` を再利用すれば学習・推論で同じ前処理を使い回せます。
 2. **成果物の書き出し**
    - `model.pkl`（または MLflow モデル）と同じディレクトリに `model_features.json` を保存します。内容は `FEATURE_COLUMNS_24` の順序付きリストそのものです。
@@ -106,6 +107,9 @@ gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 8 --timeout 120
 4. **疎通確認**
    - `tests/test_inference.py` を通して前処理が 24 列のままになっていることを確認し、Render/本番アプリから Azure ML endpoint を呼び出して `fitted data (21)` エラーが消えていることをチェックします。
    - エンドポイントのログに送信列数 (`n_cols=24`) が出力されるため、列不一致が再発した場合も即座に検知できます。
+5. **デプロイされたモデルの確認**
+   - Azure ML Studio → Online endpoints → 該当 endpoint → Deployments → 使用中の deployment を開き、`Model name` / `Model version` が 24 列モデルの登録名になっているか確認します。
+   - 併せて Azure ML の `scoring_file` ログ (`MODEL FILE PATH`, `MODEL NAME`, `MODEL VERSION`) にも出力されるため、旧26列モデルが誤って残っていないかログから追跡できます。
 
 ## Render用メモ
 
@@ -117,10 +121,11 @@ gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 8 --timeout 120
 
 `pytest` を実行すると `tests/test_inference.py` が以下を検証します。
 
-- 余分な列があっても `build_features()` が 24 列のみを返すこと
-- 必須24列のうち1列でも欠けると不足列名を含む例外になること
+- 余分な列があっても最終 payload が 24 列のみになること
+- 必須24列のうち1列でも欠けると、不足列名を含む例外が発生すること
 - box_id が欠けていても前処理が通ること
 - 履歴互換の列名（others など）がエイリアスで補正されること
+- `model_features.json`（またはその内容）で指定された順序どおりに `reindex` されること
 
 ## ライセンス
 

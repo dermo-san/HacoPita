@@ -53,6 +53,11 @@ def init():
     model_path = os.path.join(model_root, 'model.pkl')
     path = os.path.normpath(model_path)
     path_split = path.split(os.sep)
+    model_name = path_split[-3] if len(path_split) >= 3 else "unknown"
+    model_version = path_split[-2] if len(path_split) >= 2 else "unknown"
+    logger.info("MODEL FILE PATH: %s", model_path)
+    logger.info("MODEL NAME: %s", model_name)
+    logger.info("MODEL VERSION: %s", model_version)
     log_server.update_custom_dimensions({'model_name': path_split[-3], 'model_version': path_split[-2]})
     try:
         logger.info("Loading model from path.")
